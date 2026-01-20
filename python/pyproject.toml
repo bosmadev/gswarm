@@ -1,0 +1,19 @@
+[project]
+name = "nextjs-bosmadev"
+version = "1.0.0"
+description = "Python components for Next.js Template"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*np.object.*:FutureWarning",
+]

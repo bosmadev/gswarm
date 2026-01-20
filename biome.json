@@ -1,0 +1,65 @@
+{
+  "files": {
+    "includes": ["**", "!temp", "!.next", "!python"]
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineEnding": "lf"
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "groups": [":URL:", ":NODE:", ":PACKAGE:", ":ALIAS:", ":PATH:"],
+            "identifierOrder": "lexicographic"
+          }
+        }
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "useConst": { "level": "warn", "fix": "none" }
+      },
+      "correctness": {
+        "noUnusedVariables": { "level": "warn", "fix": "none" },
+        "noUnusedImports": { "level": "warn", "fix": "none" }
+      },
+      "suspicious": {
+        "noConsole": "warn",
+        "noDebugger": "error",
+        "noUnknownAtRules": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "lib/console.ts",
+        "scripts/reinstall.mjs",
+        "scripts/sync-version.mjs",
+        "scripts/launch.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
+    }
+  ]
+}

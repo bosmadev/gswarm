@@ -1,0 +1,18 @@
+# Folders
+.vscode/
+node_modules/
+.next/
+.cache/
+temp/
+
+# Python
+python/__pycache__/
+python/.venv/
+python/.pytest_cache/
+python/tests/__pycache__/
+
+# Files
+.env.keys
+tsconfig.tsbuildinfo
+next-env.d.ts
+*.log
