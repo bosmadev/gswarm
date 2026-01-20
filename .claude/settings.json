@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(pnpm validate:*)",
+      "Bash(pnpm biome check:*)",
+      "Bash(pnpm gswarm)",
+      "Skill(start)",
+      "Bash(git remote:*)",
+      "Bash(gh api:*)",
+      "Bash(curl:*)",
+      "Bash(git archive:*)",
+      "Bash(gh auth:*)",
+      "Bash(git sparse-checkout:*)",
+      "Bash(pnpm run validate:*)",
+      "Bash(npx biome:*)",
+      "Bash(pnpm build:*)",
+      "Bash(echo:*)",
+      "Bash(./node_modules/.bin/biome check:*)",
+      "Bash(./node_modules/.bin/biome:*)",
+      "Bash(node --version:*)",
+      "Bash(pnpm exec biome check:*)",
+      "Bash(pnpm tsc:*)",
+      "Bash(git log:*)"
+    ]
+  },
+  "outputStyle": "default",
+  "gitCoAuthor": false
+}
