@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
 """
-YouTube Video Transcription Script
-Fetches transcript/captions from a YouTube video using the YouTube Transcript API.
+Video Transcription Script Test
+===============================
+
+Fetches transcript/captions from YouTube videos using the YouTube Transcript API.
+
+Usage:
+    python transcribe_youtube.py <youtube_url>
+    python transcribe_youtube.py https://www.youtube.com/watch?v=VIDEO_ID
+
+Features:
+    - Supports multiple URL formats (watch, embed, short URLs)
+    - Prioritizes manual transcripts over auto-generated
+    - Falls back to translation if English not available
+    - Outputs timestamped and full-text formats
+    - Saves transcriptions to transcriptions/ directory
 """
 
 import sys
