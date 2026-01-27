@@ -4,14 +4,15 @@ node_modules/
 .next/
 .cache/
 temp/
-
-# Python
-python/__pycache__/
-python/.venv/
-python/.pytest_cache/
-python/tests/__pycache__/
+.claude/*
+!.claude/
+.serena/
+__pycache__/
+.venv/
+.pytest_cache/
 
 # Files
+!.gitkeep
 .env.keys
 tsconfig.tsbuildinfo
 next-env.d.ts

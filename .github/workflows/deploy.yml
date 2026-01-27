@@ -1,0 +1,110 @@
+name: Build and Deploy to Azure VM (WSL)
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: gswarm-api
+  DEPLOY_PATH: /opt/gswarm-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build standalone
+        env:
+          DOTENV_PRIVATE_KEY: ${{ secrets.DOTENV_PRIVATE_KEY }}
+        run: |
+          pnpm build
+          cp -r public .next/standalone/ 2>/dev/null || echo "[INFO] No public folder"
+          cp -r .next/static .next/standalone/.next/
+
+      - name: Deploy to Azure VM (WSL)
+        uses: Burnett01/rsync-deployments@v8
+        with:
+          switches: -avzr --delete
+          path: .next/standalone/
+          remote_path: ${{ env.DEPLOY_PATH }}/
+          remote_host: ${{ secrets.AZURE_VM_IP }}
+          remote_user: ${{ secrets.AZURE_VM_USER }}
+          remote_key: ${{ secrets.AZURE_SSH_PRIVATE_KEY }}
+
+      - name: Setup service and restart
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.AZURE_VM_IP }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_SSH_PRIVATE_KEY }}
+          script: |
+            # Create/overwrite service file (tee always overwrites)
+            sudo tee /etc/systemd/system/gswarm-api.service > /dev/null << 'SERVICEFILE'
+            [Unit]
+            Description=GSwarm API
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=gswarm-api
+            WorkingDirectory=/opt/gswarm-api
+            Environment=NODE_ENV=production
+            Environment=PORT=3001
+            EnvironmentFile=-/opt/gswarm-api/.env
+            ExecStart=/usr/bin/node server.js
+            Restart=always
+            RestartSec=5
+
+            [Install]
+            WantedBy=multi-user.target
+            SERVICEFILE
+
+            # Ensure service user exists
+            id gswarm-api &>/dev/null || sudo useradd --system --shell /usr/sbin/nologin gswarm-api
+
+            # Set permissions
+            sudo chown -R gswarm-api:gswarm-api /opt/gswarm-api
+            # Restrict .env file access (contains secrets)
+            [ -f /opt/gswarm-api/.env ] && sudo chmod 600 /opt/gswarm-api/.env
+
+            # Reload and restart (handles stop/start automatically)
+            sudo systemctl daemon-reload
+            sudo systemctl enable gswarm-api
+            sudo systemctl restart gswarm-api
+
+            # Verify service started
+            sleep 2
+            sudo systemctl status gswarm-api --no-pager
+
+            # Health check - verify HTTP response
+            echo "Running health check..."
+            for i in {1..5}; do
+              if curl -sf http://localhost:3001 > /dev/null 2>&1; then
+                echo "Health check passed on attempt $i"
+                exit 0
+              fi
+              echo "Attempt $i failed, waiting..."
+              sleep 2
+            done
+            echo "Health check failed after 5 attempts"
+            sudo journalctl -u gswarm-api --no-pager -n 50
+            exit 1

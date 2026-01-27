@@ -290,6 +290,9 @@ export const PREFIX = {
   // Worker
   WORKER_AUTO_INIT: `${MAGENTA}[ Worker Init ] ${RESET}`,
   WORKER_API: `${MAGENTA}[ Worker API ] ${RESET}`,
+
+  // GSwarm
+  GSWARM: `\x1b[38;5;208m[ GSwarm ] ${RESET}`,
 } as const;
 
 // =============================================================================

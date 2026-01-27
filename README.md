@@ -1,107 +1,149 @@
 <div align="center">
 
-# Next.js Template
+# GSwarm API
 
-Next.js 16+ template with Biome, Knip, Vitest, Tailwind v4, and Python support.
+OpenAI-compatible API gateway for Google Cloud AI with multi-account token pooling.
 
 ![Next.js](https://img.shields.io/badge/Next.js-16+-black?logo=next.js)
-![React](https://img.shields.io/badge/React-19+-61DAFB?logo=react)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9+-3178C6?logo=typescript)
-![Tailwind](https://img.shields.io/badge/Tailwind-v4+-06B6D4?logo=tailwindcss)
-![Python](https://img.shields.io/badge/Python-3.13+-3776AB?logo=python)
+![Node.js](https://img.shields.io/badge/Node.js-22+-339933?logo=node.js)
 
 </div>
 
 ## Features
 
-- Next.js 16+ with Turbopack for fast development
-- React 19 with strict mode enabled
-- TypeScript 5.9+ with strict compiler settings
-- Tailwind CSS v4 with `@theme` design tokens
-- Biome for linting and formatting
-- Knip for dead-code detection
-- Vitest for unit testing + pytest for Python
-- Python 3.13+ with uv package manager
-- Interactive launch script with multiple modes
+- OpenAI-compatible `/v1/chat/completions` endpoint
+- Multi-account Google OAuth token pooling
+- Admin dashboard for account and API key management
+- Automatic token refresh
+- IP-based API key restrictions
+- Metrics and error tracking
 
 ## Quick Start
 
 ```bash
 # Clone and install
-git clone https://github.com/bosmadev/nextjs-bosmadev.git
-cd nextjs-bosmadev
+git clone <repo-url>
+cd gswarm-api
 pnpm install
 
-# Development (interactive launcher)
-pnpm launch
+# Set up environment
+cp .env.example .env
+# Edit .env with your values
 
-# Or direct development server
+# Development
 pnpm dev
+
+# Production build
+pnpm build
 ```
+
+## Environment Variables
+
+Create a `.env` file with the following:
+
+```bash
+# Google OAuth (required for token management)
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+
+# Admin Authentication
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your-secure-password
+
+# Dashboard Users (format: user1:pass1,user2:pass2)
+DASHBOARD_USERS=user1:password1
+
+# API Keys (format: name:key:ips - use * for all IPs)
+API_KEYS=mykey:sk-gswarm-xxxxx:*
+
+# Application
+NEXT_PUBLIC_APP_URL=https://your-domain.com
+NODE_ENV=production
+
+# Session Secret (generate with: openssl rand -base64 32)
+SESSION_SECRET=your-session-secret
+```
+
+### Google OAuth Setup
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+2. Create a new OAuth 2.0 Client ID (Web application)
+3. Add authorized redirect URI: `https://your-domain.com/api/auth/callback`
+4. Copy Client ID and Client Secret to your `.env`
+
+## Deployment (Azure VM + WSL)
+
+The project deploys automatically via GitHub Actions on push to `main`.
+
+### GitHub Secrets Required
+
+| Secret | Description |
+|--------|-------------|
+| `AZURE_VM_IP` | Azure VM public IP address |
+| `AZURE_VM_USER` | SSH username (e.g., `azureuser`) |
+| `AZURE_SSH_PRIVATE_KEY` | SSH private key for deployment |
+| `DOTENV_PRIVATE_KEY` | dotenvx decryption key (optional) |
+
+### Server Setup (One-time)
+
+```bash
+# On Azure VM (WSL/Ubuntu)
+
+# Create app directory
+sudo mkdir -p /opt/gswarm-api
+sudo chown $USER:$USER /opt/gswarm-api
+
+# Create .env file with secrets
+sudo tee /opt/gswarm-api/.env << 'EOF'
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_CLIENT_SECRET=your-client-secret
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your-password
+DASHBOARD_USERS=user1:pass1
+API_KEYS=key1:sk-gswarm-xxx:*
+NEXT_PUBLIC_APP_URL=https://your-domain.com
+NODE_ENV=production
+SESSION_SECRET=your-session-secret
+EOF
+
+# Secure the .env file
+sudo chmod 600 /opt/gswarm-api/.env
+
+# Service user will be created automatically by deploy workflow
+```
+
+### Service Management
+
+```bash
+# Status
+sudo systemctl status gswarm-api
+
+# Logs
+sudo journalctl -u gswarm-api -f
+
+# Restart
+sudo systemctl restart gswarm-api
+```
+
+## API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/gswarm/chat` | OpenAI-compatible chat completions |
+| `POST /api/gswarm/generate` | Text generation |
+| `GET /api/gswarm/config` | Available models |
+| `GET /api/gswarm/metrics` | Usage metrics |
+| `GET /dashboard` | Admin dashboard |
 
 ## Scripts
 
 | Script | Description |
 |--------|-------------|
-| `pnpm launch` | Interactive launcher with dev/prod/tunnel modes |
-| `pnpm dev` | Development server with Turbopack (port 3000) |
-| `pnpm build` | Full build with validation |
-| `pnpm validate` | Run all checks (knip, biome, tsc, vitest, pytest) |
-| `pnpm check:all` | Biome lint + format check |
-| `pnpm tsc` | TypeScript type checking |
-| `pnpm vitest:run` | Run Vitest tests |
-| `pnpm pytest` | Run Python tests |
-| `pnpm reinstall` | Clean reinstall dependencies |
-
-## Project Structure
-
-```
-nextjs-bosmadev/
-├── app/                  # Next.js app directory
-│   ├── globals.css       # Tailwind v4 design tokens
-│   ├── layout.tsx        # Root layout
-│   └── page.tsx          # Home page
-├── lib/                  # Shared utilities
-│   ├── console.ts        # Logging utilities
-│   └── utils.ts          # Tailwind cn() helper
-├── python/               # Python subproject
-│   ├── pyproject.toml    # Python config
-│   └── tests/            # pytest tests
-├── scripts/              # Build scripts
-│   ├── launch.ts         # Interactive launcher
-│   ├── reinstall.mjs     # Clean reinstall
-│   └── sync-version.mjs  # Version sync
-├── biome.json            # Linting/formatting
-├── tailwind.config.ts    # Tailwind config
-└── tsconfig.json         # TypeScript config
-```
-
-## Requirements
-
-- Node.js 25+
-- pnpm 10.26+
-- Python 3.13+ (optional, for ML pipeline)
-- uv 0.9+ (Python package manager)
+| `pnpm dev` | Development server (port 3000) |
+| `pnpm build` | Production build |
+| `pnpm validate` | Run all checks |
 
 ## License
 
-MIT
-
----
-
-<div align="center">
-
-## Changelog
-
-</div>
-
----
-[![v](https://img.shields.io/badge/v100-2026--1--20-64748b.svg)]()
-
-- [x] Initial template release
-- [x] Next.js 16.1+ with Turbopack
-- [x] Tailwind CSS v4 with slate color palette
-- [x] Biome 2.3+ / Knip 5.77+ / Vitest 4.0+ configured
-- [x] Python 3.13+ with uv package manager and pytest
-- [x] Interactive launch script with Crush-style UI
-- [x] Version sync between package.json and pyproject.toml
+All rights reserved.

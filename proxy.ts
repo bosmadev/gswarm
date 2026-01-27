@@ -8,7 +8,7 @@ import {
   consoleDebug,
 } from "./lib/console";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { method, nextUrl } = request;
   const path = nextUrl.pathname;
 

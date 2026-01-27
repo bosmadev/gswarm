@@ -4,13 +4,17 @@
  * Interactive launch tool with:
  * - Dev server mode (hot reload)
  * - Production server mode
+ * - Cloudflare tunnel support
  * - Automatic process cleanup
+ * - ALL 4 browsers enabled by default
  *
  * Usage: pnpm launch
+ *        pnpm launch --only playwriter
+ *        pnpm launch --skip chrome-mcp
  */
 
 import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -41,9 +45,57 @@ const DESCRIPTION: string = packageJson.description;
 const SERVER_PORT = 3000;
 
 // Cloudflare Tunnel Configuration (customize per project)
-const TUNNEL_NAME = "app";
+const TUNNEL_NAME = "gswarm-api";
 const TUNNEL_ORIGIN = `http://localhost:${SERVER_PORT}`;
-const TUNNEL_PUBLIC_URL = "https://app.example.com";
+const TUNNEL_PUBLIC_URL = "https://api.gswarm.dev";
+
+// =============================================================================
+// BROWSER CONFIGURATION
+// =============================================================================
+
+interface BrowserConfig {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  enabled: boolean;
+  color: string;
+}
+
+const BROWSERS: BrowserConfig[] = [
+  {
+    id: "system",
+    name: "System Browser",
+    command: "xdg-open",
+    args: [`http://localhost:${SERVER_PORT}`],
+    enabled: true,
+    color: CYAN,
+  },
+  {
+    id: "playwriter",
+    name: "Playwriter MCP",
+    command: "npx",
+    args: ["playwriter"],
+    enabled: true,
+    color: MAGENTA,
+  },
+  {
+    id: "agent-browser",
+    name: "Agent Browser",
+    command: "npx",
+    args: ["@anthropic/agent-browser"],
+    enabled: true,
+    color: GREEN,
+  },
+  {
+    id: "chrome-mcp",
+    name: "Chrome MCP",
+    command: "npx",
+    args: ["@anthropic/chrome-mcp"],
+    enabled: true,
+    color: YELLOW,
+  },
+];
 
 // =============================================================================
 // INTERFACES
@@ -65,10 +117,31 @@ interface SystemStats {
 // =============================================================================
 
 let childProcess: ChildProcess | null = null;
+const browserProcesses: Map<string, ChildProcess> = new Map();
 let isInMenu = false;
 let stdinListenerActive = false;
 let hieroglyphAnimationInterval: NodeJS.Timeout | null = null;
 let currentAnimationFrame = 0;
+
+// Parse CLI args
+const args = process.argv.slice(2);
+const onlyBrowser = args.find((a) => a.startsWith("--only="))?.split("=")[1];
+const skipBrowsers = args
+  .filter((a) => a.startsWith("--skip="))
+  .map((a) => a.split("=")[1]);
+
+// Apply CLI flags to browser config
+if (onlyBrowser) {
+  for (const browser of BROWSERS) {
+    browser.enabled = browser.id === onlyBrowser;
+  }
+} else if (skipBrowsers.length > 0) {
+  for (const browser of BROWSERS) {
+    if (skipBrowsers.includes(browser.id)) {
+      browser.enabled = false;
+    }
+  }
+}
 
 // =============================================================================
 // UTILITY FUNCTIONS
@@ -302,7 +375,7 @@ function startAnimation(): void {
   currentAnimationFrame = 0;
 
   // Static parts of title line
-  const orangeVersion = `${rgb(220, 110, 50)}v${SYSTEM_VERSION}${RESET}`;
+  const orangeVersion = `${rgb(220, 110, 50)}${SYSTEM_VERSION}${RESET}`;
 
   // Hide cursor to prevent highlighting artifacts
   process.stdout.write("\x1b[?25l");
@@ -380,7 +453,7 @@ function printBanner(): void {
   const gradientName = prerenderedNameFrames[0];
 
   // Version in orange, description in white
-  const orangeVersion = `${rgb(220, 110, 50)}v${SYSTEM_VERSION}${RESET}`;
+  const orangeVersion = `${rgb(220, 110, 50)}${SYSTEM_VERSION}${RESET}`;
 
   // Format: {displayName animated} ({version in orange}) | {description in white}
   // NO leading newline - start content at line 1
@@ -402,26 +475,38 @@ function buildSystemInfo(stats: SystemStats): string {
 }
 
 /**
+ * Build browser status string
+ */
+function buildBrowserStatus(): string {
+  const enabledBrowsers = BROWSERS.filter((b) => b.enabled);
+  const browserNames = enabledBrowsers.map(
+    (b) => `${b.color}${b.name}${RESET}`,
+  );
+  return `${DIM}Browsers:${RESET} ${browserNames.join(", ")}`;
+}
+
+/**
  * Display the main menu
  */
 function displayMenu(): void {
   printBanner();
 
   const stats = getSystemStats();
-  process.stdout.write(`${buildSystemInfo(stats)}\n\n`);
+  process.stdout.write(`${buildSystemInfo(stats)}\n`);
+  process.stdout.write(`${buildBrowserStatus()}\n\n`);
 
   process.stdout.write(`${BOLD}Select Deployment Mode:${RESET}\n\n`);
   process.stdout.write(
     `  ${CYAN}[1]${RESET} ${BOLD}Development Server (Debug)${RESET}\n`,
   );
   process.stdout.write(
-    `      ${DIM}Hot reload, DEBUG=true, port ${SERVER_PORT}${RESET}\n\n`,
+    `      ${DIM}Hot reload, DEBUG=true, browsers, port ${SERVER_PORT}${RESET}\n\n`,
   );
   process.stdout.write(
     `  ${YELLOW}[2]${RESET} ${BOLD}Development Server${RESET}\n`,
   );
   process.stdout.write(
-    `      ${DIM}Hot reload, standard logging, port ${SERVER_PORT}${RESET}\n\n`,
+    `      ${DIM}Hot reload, standard logging, browsers, port ${SERVER_PORT}${RESET}\n\n`,
   );
   process.stdout.write(
     `  ${GREEN}[3]${RESET} ${BOLD}Production Server${RESET}\n`,
@@ -435,19 +520,128 @@ function displayMenu(): void {
   process.stdout.write(
     `      ${DIM}Production build + tunnel to ${TUNNEL_PUBLIC_URL}${RESET}\n\n`,
   );
+  process.stdout.write(`  ${DIM}[B]${RESET} ${BOLD}Toggle Browsers${RESET}\n`);
+  process.stdout.write(
+    `      ${DIM}Enable/disable individual browsers${RESET}\n\n`,
+  );
   process.stdout.write(`  ${RED}[0]${RESET} ${BOLD}Exit${RESET}\n\n`);
 
   // Decorative footer with flowing orange gradient (animated)
   printAnimatedFooter();
 
   // Track line count for animation cursor positioning (1-indexed)
-  // Lines: 1=top bar, 2=title, 3=bottom bar, 4=system info, 5=empty
-  // 6=Select, 7=empty, 8=[1], 9=desc, 10=empty, 11=[2], 12=desc, 13=empty
-  // 14=[3], 15=desc, 16=empty, 17=[4], 18=desc, 19=empty, 20=[0], 21=empty, 22=footer
-  menuLineCount = 22;
+  // Lines: 1=top bar, 2=title, 3=bottom bar, 4=system info, 5=browsers, 6=empty
+  // 7=Select, 8=empty, 9=[1], 10=desc, 11=empty, 12=[2], 13=desc, 14=empty
+  // 15=[3], 16=desc, 17=empty, 18=[4], 19=desc, 20=empty, 21=[B], 22=desc, 23=empty, 24=[0], 25=empty, 26=footer
+  menuLineCount = 26;
 
   // Start animation loop after menu is displayed
   startAnimation();
+}
+
+/**
+ * Display browser toggle menu
+ */
+function displayBrowserMenu(): void {
+  clearScreen();
+  printBanner();
+
+  process.stdout.write(`${BOLD}Toggle Browsers:${RESET}\n\n`);
+
+  for (let i = 0; i < BROWSERS.length; i++) {
+    const browser = BROWSERS[i];
+    const status = browser.enabled
+      ? `${GREEN}[ON]${RESET}`
+      : `${RED}[OFF]${RESET}`;
+    process.stdout.write(
+      `  ${DIM}[${i + 1}]${RESET} ${browser.color}${browser.name}${RESET} ${status}\n`,
+    );
+  }
+
+  process.stdout.write(`\n  ${DIM}[A]${RESET} Enable All\n`);
+  process.stdout.write(`  ${DIM}[N]${RESET} Disable All\n`);
+  process.stdout.write(`  ${DIM}[0]${RESET} Back to Main Menu\n\n`);
+
+  process.stdout.write(`${CYAN}Enter your choice: ${RESET}`);
+}
+
+// =============================================================================
+// BROWSER MANAGEMENT
+// =============================================================================
+
+/**
+ * Start enabled browsers
+ */
+async function startBrowsers(): Promise<void> {
+  const enabledBrowsers = BROWSERS.filter((b) => b.enabled);
+
+  if (enabledBrowsers.length === 0) {
+    process.stdout.write(`  ${DIM}○${RESET} No browsers enabled\n`);
+    return;
+  }
+
+  process.stdout.write(`\n${BOLD}[BROWSERS] Starting browsers...${RESET}\n`);
+
+  for (const browser of enabledBrowsers) {
+    try {
+      // Skip system browser command check - just try to launch
+      if (browser.id !== "system") {
+        // Check if command exists
+        try {
+          execSync(`which ${browser.command}`, {
+            encoding: "utf-8",
+            stdio: "pipe",
+          });
+        } catch {
+          process.stdout.write(
+            `  ${YELLOW}⚠${RESET} ${browser.name} not found, skipping\n`,
+          );
+          continue;
+        }
+      }
+
+      const proc = spawn(browser.command, browser.args, {
+        stdio: "pipe",
+        detached: true,
+      });
+
+      browserProcesses.set(browser.id, proc);
+
+      proc.on("error", (err) => {
+        process.stdout.write(
+          `  ${RED}✖${RESET} ${browser.name} error: ${err.message}\n`,
+        );
+      });
+
+      process.stdout.write(
+        `  ${GREEN}✔${RESET} ${browser.color}${browser.name}${RESET} started\n`,
+      );
+
+      // Small delay between browser launches
+      await sleep(500);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      process.stdout.write(
+        `  ${YELLOW}⚠${RESET} ${browser.name}: ${errorMessage}\n`,
+      );
+    }
+  }
+}
+
+/**
+ * Stop all browser processes
+ */
+function stopBrowsers(): void {
+  for (const [_id, proc] of browserProcesses.entries()) {
+    try {
+      if (proc.pid) {
+        process.kill(-proc.pid, "SIGTERM");
+      }
+    } catch {
+      // Process may already be dead
+    }
+  }
+  browserProcesses.clear();
 }
 
 // =============================================================================
@@ -455,13 +649,12 @@ function displayMenu(): void {
 // =============================================================================
 
 /**
- * Kill processes blocking port 80
+ * Kill processes blocking port
  */
 async function killBlockingProcesses(): Promise<void> {
   process.stdout.write(`\n${BOLD}[CLEANUP] Process Termination${RESET}\n`);
 
   const currentPid = process.pid;
-  const { execSync } = await import("node:child_process");
   let totalKilled = 0;
 
   process.stdout.write(`  ${DIM}Terminating blocking processes...${RESET}\n`);
@@ -565,11 +758,13 @@ async function startDevServer(): Promise<void> {
 
   process.stdout.write(`\n${BOLD}[START] Development Server${RESET}\n`);
   process.stdout.write(
-    `  ${DIM}Hot reload enabled, port ${SERVER_PORT}${RESET}\n\n`,
+    `  ${DIM}Hot reload enabled, port ${SERVER_PORT}${RESET}\n`,
   );
 
+  await startBrowsers();
+
   process.stdout.write(
-    `${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
+    `\n${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
   );
 
   childProcess = spawn("pnpm", ["dev"], {
@@ -581,6 +776,7 @@ async function startDevServer(): Promise<void> {
   });
 
   childProcess.on("close", (code) => {
+    stopBrowsers();
     process.stdout.write(
       `\n${YELLOW}Dev server exited with code ${code}${RESET}\n`,
     );
@@ -588,6 +784,7 @@ async function startDevServer(): Promise<void> {
   });
 
   childProcess.on("error", (err) => {
+    stopBrowsers();
     process.stdout.write(
       `\n${RED}Error starting dev server: ${err.message}${RESET}\n`,
     );
@@ -607,11 +804,13 @@ async function startDevServerDebug(): Promise<void> {
 
   process.stdout.write(`\n${BOLD}[START] Development Server (Debug)${RESET}\n`);
   process.stdout.write(
-    `  ${DIM}Hot reload enabled, DEBUG=true, port ${SERVER_PORT}${RESET}\n\n`,
+    `  ${DIM}Hot reload enabled, DEBUG=true, port ${SERVER_PORT}${RESET}\n`,
   );
 
+  await startBrowsers();
+
   process.stdout.write(
-    `${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
+    `\n${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
   );
 
   childProcess = spawn("pnpm", ["dev"], {
@@ -624,6 +823,7 @@ async function startDevServerDebug(): Promise<void> {
   });
 
   childProcess.on("close", (code) => {
+    stopBrowsers();
     process.stdout.write(
       `\n${YELLOW}Dev server (debug) exited with code ${code}${RESET}\n`,
     );
@@ -631,6 +831,7 @@ async function startDevServerDebug(): Promise<void> {
   });
 
   childProcess.on("error", (err) => {
+    stopBrowsers();
     process.stdout.write(
       `\n${RED}Error starting dev server (debug): ${err.message}${RESET}\n`,
     );
@@ -738,7 +939,6 @@ async function startTunnel(): Promise<void> {
 
   // Check cloudflared is installed
   try {
-    const { execSync } = await import("node:child_process");
     execSync("which cloudflared", { encoding: "utf-8" });
   } catch {
     process.stdout.write(
@@ -867,6 +1067,8 @@ async function startTunnel(): Promise<void> {
 // MENU HANDLING
 // =============================================================================
 
+let inBrowserMenu = false;
+
 /**
  * Return to main menu
  */
@@ -902,10 +1104,63 @@ function waitForKeypress(): Promise<void> {
 }
 
 /**
+ * Handle browser menu keypress
+ */
+function handleBrowserMenuKeypress(key: Buffer): void {
+  const keyStr = key.toString();
+
+  // Ctrl+C or Escape - back to main menu
+  if (key[0] === 3 || key[0] === 27) {
+    inBrowserMenu = false;
+    main();
+    return;
+  }
+
+  // Number keys 1-4 toggle browsers
+  const num = Number.parseInt(keyStr, 10);
+  if (num >= 1 && num <= BROWSERS.length) {
+    BROWSERS[num - 1].enabled = !BROWSERS[num - 1].enabled;
+    displayBrowserMenu();
+    return;
+  }
+
+  // A - enable all
+  if (keyStr.toLowerCase() === "a") {
+    for (const browser of BROWSERS) {
+      browser.enabled = true;
+    }
+    displayBrowserMenu();
+    return;
+  }
+
+  // N - disable all
+  if (keyStr.toLowerCase() === "n") {
+    for (const browser of BROWSERS) {
+      browser.enabled = false;
+    }
+    displayBrowserMenu();
+    return;
+  }
+
+  // 0 - back to main menu
+  if (keyStr === "0") {
+    inBrowserMenu = false;
+    main();
+    return;
+  }
+}
+
+/**
  * Handle menu keypress
  */
 function handleMenuKeypress(key: Buffer): void {
   const keyStr = key.toString();
+
+  // Handle browser menu separately
+  if (inBrowserMenu) {
+    handleBrowserMenuKeypress(key);
+    return;
+  }
 
   if (key[0] === 3) {
     stopAnimation();
@@ -946,6 +1201,13 @@ function handleMenuKeypress(key: Buffer): void {
       stopListeningForMenuInput();
       startTunnel();
       break;
+    case "b":
+    case "B":
+      isInMenu = false;
+      stopAnimation();
+      inBrowserMenu = true;
+      displayBrowserMenu();
+      break;
     case "0":
     case "q":
     case "Q":
@@ -955,7 +1217,7 @@ function handleMenuKeypress(key: Buffer): void {
       break;
     default:
       process.stdout.write(
-        `\r${RED}Invalid option '${keyStr.replace(/[^\x20-\x7E]/g, "")}'. Press 1, 2, 3, 4, or 0.${RESET}                    \r`,
+        `\r${RED}Invalid option '${keyStr.replace(/[^\x20-\x7E]/g, "")}'. Press 1, 2, 3, 4, B, or 0.${RESET}                    \r`,
       );
       process.stdout.write(`${CYAN}Enter your choice: ${RESET}`);
   }
@@ -997,7 +1259,7 @@ function stopListeningForMenuInput(): void {
  * Menu data handler
  */
 function onMenuData(key: Buffer | string): void {
-  if (!isInMenu) return;
+  if (!isInMenu && !inBrowserMenu) return;
 
   const keyBuffer = Buffer.isBuffer(key) ? key : Buffer.from(key);
   handleMenuKeypress(keyBuffer);
@@ -1009,6 +1271,7 @@ function onMenuData(key: Buffer | string): void {
 function cleanupAndExit(code: number): void {
   stopAnimation();
   stopListeningForMenuInput();
+  stopBrowsers();
 
   if (childProcess) {
     childProcess.kill("SIGTERM");

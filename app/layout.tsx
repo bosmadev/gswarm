@@ -26,8 +26,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Next.js Template",
-  description: "Next.js 16+ template with Biome, Knip, Vitest, and Tailwind v4",
+  title: "GSwarm API",
+  description:
+    "Centralized GSwarm AI proxy service with OAuth token management and project rotation",
 };
 
 export default function RootLayout({

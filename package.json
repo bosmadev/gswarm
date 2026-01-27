@@ -1,20 +1,23 @@
 {
-  "name": "nextjs-bosmadev",
-  "displayName": "BosmaDev NextJS",
-  "description": "Template with Biome, Knip, Vitest, and Tailwind v4",
-  "version": "1.0.0",
+  "name": "gswarm-api",
+  "displayName": "GSwarm API",
+  "description": "Gemini Swarm API Proxy",
+  "version": "v101",
   "publisher": "bosmadev",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/bosmadev/nextjs-bosmadev"
+    "url": "https://github.com/bosmadev/gswarm-api"
   },
   "type": "module",
   "scripts": {
     "############ SERVER ############": "",
-    "dev": "next dev --turbopack --port 3000",
-    "start": "next start --port 3000",
+    "dev": "next dev --turbopack --port 3001",
+    "start": "next start --port 3001",
     "launch": "tsx scripts/launch.ts",
+    "launch:debug": "DEBUG=true tsx scripts/launch.ts",
+    "launch:tunnel": "cloudflared tunnel run gswarm-api",
+    "gswarm": "GSWARM_CLI=true tsx lib/gswarm/cli.ts",
     "############ LINTING & VALIDATION ############": "",
     "knip": "knip --no-config-hints",
     "knip:strict": "knip --strict",
@@ -37,6 +40,12 @@
     "vitest:run": "vitest run",
     "vitest:ui": "vitest --ui",
     "pytest": "cd python && uv run pytest",
+    "testkeys": "tsx scripts/test-api-keys.ts help",
+    "testkeys:docs": "tsx scripts/test-api-keys.ts docs",
+    "testkeys:list": "tsx scripts/test-api-keys.ts list",
+    "testkeys:create": "tsx scripts/test-api-keys.ts create",
+    "testkeys:delete": "tsx scripts/test-api-keys.ts delete",
+    "testkeys:test": "tsx scripts/test-api-keys.ts test",
     "############ BUILDING ############": "",
     "tw:upgrade": "pnpm dlx @tailwindcss/upgrade --force",
     "validate": "(pnpm tw:upgrade || echo [WARN] Tailwind upgrade skipped) && pnpm knip && pnpm check:all && pnpm tsc && pnpm vitest:run && pnpm pytest",
@@ -85,15 +94,18 @@
     "lucide-react": "^0.562.0",
     "mermaid": "^11.12.2",
     "next": "^16.1.2",
+    "node-cron": "^4.2.1",
     "react": "^19.2.3",
     "react-day-picker": "^9.13.0",
     "react-dom": "^19.2.3",
     "react-hook-form": "^7.71.1",
     "react-markdown": "^10.1.0",
+    "recharts": "^3.7.0",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "shiki": "^3.21.0",
     "sonner": "^2.0.7",
+    "swr": "^2.3.8",
     "tailwind-merge": "^3.4.0",
     "zod": "^4.2.1"
   },
@@ -102,6 +114,7 @@
     "@dotenvx/dotenvx": "^1.51.4",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^25.0.3",
+    "@types/node-cron": "^3.0.11",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.2",
@@ -132,14 +145,16 @@
   "knip": {
     "ignoreExportsUsedInFile": true,
     "ignoreBinaries": [
-      "uv"
+      "uv",
+      "cloudflared"
     ],
     "ignore": [
       "components/ui/**",
       "components/providers/**",
       "components/topbar/**",
       "lib/**",
-      "scripts/launch.ts"
+      "scripts/launch.ts",
+      "scripts/test-api-keys.ts"
     ],
     "ignoreDependencies": [
       "zod",

@@ -4,6 +4,7 @@ import type { NextConfig } from "next";
 const isDebugMode = process.env.DEBUG === "true" || process.env.DEBUG === "1";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   // Enable React Compiler when babel-plugin-react-compiler is installed
   // reactCompiler: true,
   // Add project-specific external packages here (e.g., bullmq, ws)

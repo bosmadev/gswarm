@@ -1,6 +1,6 @@
 [project]
 name = "nextjs-bosmadev"
-version = "1.0.0"
+version = "v101"
 description = "Python components for Next.js Template"
 readme = "README.md"
 requires-python = ">=3.13"

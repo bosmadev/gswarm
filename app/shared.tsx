@@ -8,7 +8,7 @@
  * @module SharedLayout
  */
 
-import { FileText, Home, Settings } from "lucide-react";
+import { Home, LayoutDashboard, Settings } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type React from "react";
@@ -20,7 +20,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 /**
  * Defines the available tab types for navigation.
  */
-type TabType = "home" | "readme" | "settings";
+type TabType = "home" | "dashboard" | "settings";
 
 /**
  * Props for the SidebarButton component.
@@ -86,8 +86,8 @@ const getTabFromPath = (path: string): TabType => {
   const firstPart = pathParts[0];
 
   switch (firstPart) {
-    case "readme":
-      return "readme";
+    case "dashboard":
+      return "dashboard";
     case "settings":
       return "settings";
     default:
@@ -104,7 +104,7 @@ const navItems: {
   label: string;
 }[] = [
   { tab: "home", icon: Home, label: "Home" },
-  { tab: "readme", icon: FileText, label: "README" },
+  { tab: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { tab: "settings", icon: Settings, label: "Settings" },
 ];
 
