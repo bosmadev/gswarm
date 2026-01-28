@@ -1,6 +1,6 @@
 {
   "files": {
-    "includes": ["**", "!temp", "!.next", "!python"]
+    "includes": ["**", "!temp", "!.next", "!python", "!.claude"]
   },
   "css": {
     "parser": {

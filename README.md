@@ -126,6 +126,34 @@ sudo journalctl -u gswarm-api -f
 sudo systemctl restart gswarm-api
 ```
 
+## VM Deployment
+
+### Server Control
+
+```bash
+cd /opt/gswarm-api
+
+./launch.sh start        # Start in background
+./launch.sh foreground   # Run in foreground (Ctrl+C to stop)
+./launch.sh stop         # Stop server
+./launch.sh restart      # Restart server
+./launch.sh logs         # Tail error.log
+./launch.sh status       # Check if running
+```
+
+### CLI Scripts (Node.js 25+ required)
+
+```bash
+node lib/gswarm/cli.ts status           # GSwarm status
+node lib/gswarm/cli.ts projects         # List projects
+node scripts/test-api-keys.ts list      # List API keys
+```
+
+### Error Logs
+
+- **Production:** `/opt/gswarm-api/error.log`
+- **Development:** `./error.log` (gitignored)
+
 ## API Endpoints
 
 | Endpoint | Description |

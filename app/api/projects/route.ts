@@ -8,6 +8,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import {
   getDataPath,
   listFiles,
@@ -260,7 +261,7 @@ export async function GET(request: NextRequest) {
       totalPages,
     } satisfies ProjectsResponse);
   } catch (error) {
-    console.error("[API] GET /api/projects failed:", error);
+    consoleError(PREFIX.API, "GET /api/projects failed:", error);
     return NextResponse.json(
       {
         error: "Failed to load projects",

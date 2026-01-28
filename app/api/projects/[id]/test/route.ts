@@ -8,6 +8,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import { gswarmClient } from "@/lib/gswarm/client";
 import {
   getDataPath,
@@ -123,8 +124,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           });
         } catch (testError) {
           const latencyMs = Math.round(performance.now() - startTime);
-          console.error(
-            `[API] POST /api/projects/${projectId}/test - API test failed:`,
+          consoleError(
+            PREFIX.API,
+            `POST /api/projects/${projectId}/test - API test failed:`,
             testError,
           );
 
@@ -147,7 +149,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   } catch (error) {
-    console.error("[API] POST /api/projects/[id]/test failed:", error);
+    consoleError(PREFIX.API, "POST /api/projects/[id]/test failed:", error);
     return NextResponse.json(
       {
         error: "Failed to test project",

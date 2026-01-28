@@ -8,6 +8,7 @@
 
 import { Check, ClipboardCopy, Key, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useNotifications } from "@/components/providers";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -99,6 +100,7 @@ export interface APIKeysSectionProps {
 }
 
 export function APIKeysSection({ className }: APIKeysSectionProps) {
+  const { success, error } = useNotifications();
   const [keys, setKeys] = useState<APIKey[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -159,7 +161,7 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
       });
 
       if (!response.ok) {
-        // API error - response not OK, silently return
+        error("Failed to create API key");
         return;
       }
 
@@ -171,12 +173,13 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
       setCreateDialogOpen(false);
       setShowKeyDialogOpen(true);
       setNewKeyData({ name: "", ips: "", allowAllIPs: true });
+      success("API key created successfully");
     } catch {
-      // Network error - silently fail, user can retry
+      error("Failed to create API key");
     } finally {
       setIsCreating(false);
     }
-  }, [newKeyData]);
+  }, [newKeyData, success, error]);
 
   const handleDeleteKey = useCallback(async () => {
     if (!keyToDelete) return;
@@ -189,7 +192,7 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
       });
 
       if (!response.ok) {
-        // API error - response not OK, silently return
+        error("Failed to delete API key");
         return;
       }
 
@@ -198,22 +201,27 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
       );
       setDeleteDialogOpen(false);
       setKeyToDelete(null);
+      success("API key deleted successfully");
     } catch {
-      // Network error - silently fail, user can retry
+      error("Failed to delete API key");
     } finally {
       setIsDeleting(false);
     }
-  }, [keyToDelete]);
+  }, [keyToDelete, success, error]);
 
-  const copyKey = useCallback(async (key: string, keyHash: string) => {
-    try {
-      await navigator.clipboard.writeText(key);
-      setCopiedKeyHash(keyHash);
-      setTimeout(() => setCopiedKeyHash(null), 2000);
-    } catch {
-      // Clipboard API not available
-    }
-  }, []);
+  const copyKey = useCallback(
+    async (key: string, keyHash: string) => {
+      try {
+        await navigator.clipboard.writeText(key);
+        setCopiedKeyHash(keyHash);
+        setTimeout(() => setCopiedKeyHash(null), 2000);
+        success("API key copied to clipboard");
+      } catch {
+        error("Failed to copy to clipboard");
+      }
+    },
+    [success, error],
+  );
 
   const openDeleteDialog = useCallback((key: APIKey) => {
     setKeyToDelete(key);

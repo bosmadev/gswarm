@@ -8,31 +8,35 @@ import type {
   StorageResult,
 } from "../types";
 import {
+  CacheManager,
   deleteFile,
   getStoragePath,
+  getTodayDateString,
   listFiles,
   readJsonFile,
   writeJsonFile,
 } from "./base";
 
+// Re-export getTodayDateString for backward compatibility
+export { getTodayDateString } from "./base";
+
 // Constants
 export const METRICS_DIR = "metrics";
 export const METRICS_CACHE_TTL_MS = 10000; // 10 seconds
 
-// In-memory cache for metrics
-interface MetricsCache {
-  data: DailyMetrics;
-  loadedAt: number;
-}
-
-const metricsCache = new Map<string, MetricsCache>();
+// In-memory cache for metrics by date
+const metricsCacheByDate = new Map<string, CacheManager<DailyMetrics>>();
 
 /**
- * Gets today's date as YYYY-MM-DD string
+ * Gets or creates a CacheManager for a specific date
  */
-export function getTodayDateString(): string {
-  const now = new Date();
-  return now.toISOString().split("T")[0];
+function getMetricsCacheForDate(date: string): CacheManager<DailyMetrics> {
+  let cacheManager = metricsCacheByDate.get(date);
+  if (!cacheManager) {
+    cacheManager = new CacheManager<DailyMetrics>(METRICS_CACHE_TTL_MS);
+    metricsCacheByDate.set(date, cacheManager);
+  }
+  return cacheManager;
 }
 
 /**
@@ -273,11 +277,12 @@ export async function loadMetrics(
 ): Promise<StorageResult<DailyMetrics>> {
   const targetDate = date || getTodayDateString();
   const filePath = getMetricsPath(targetDate);
+  const cacheManager = getMetricsCacheForDate(targetDate);
 
   // Check cache
-  const cached = metricsCache.get(targetDate);
-  if (cached && Date.now() - cached.loadedAt < METRICS_CACHE_TTL_MS) {
-    return { success: true, data: cached.data };
+  const cached = cacheManager.get();
+  if (cached) {
+    return { success: true, data: cached };
   }
 
   const result = await readJsonFile<DailyMetrics>(filePath);
@@ -291,10 +296,7 @@ export async function loadMetrics(
   }
 
   // Update cache
-  metricsCache.set(targetDate, {
-    data: result.data,
-    loadedAt: Date.now(),
-  });
+  cacheManager.set(result.data);
 
   return result;
 }
@@ -332,10 +334,8 @@ export async function recordMetric(
   }
 
   // Update cache
-  metricsCache.set(metricDate, {
-    data: dailyMetrics,
-    loadedAt: Date.now(),
-  });
+  const cacheManager = getMetricsCacheForDate(metricDate);
+  cacheManager.set(dailyMetrics);
 
   return { success: true, data: undefined };
 }
@@ -500,8 +500,12 @@ export async function cleanupOldMetrics(
 
       if (deleteResult.success) {
         deletedCount++;
-        // Remove from cache
-        metricsCache.delete(fileDate);
+        // Invalidate cache for this date
+        const cacheManager = metricsCacheByDate.get(fileDate);
+        if (cacheManager) {
+          cacheManager.invalidate();
+          metricsCacheByDate.delete(fileDate);
+        }
       } else {
         errors.push(deleteResult.error);
       }

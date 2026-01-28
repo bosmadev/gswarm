@@ -9,6 +9,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
 import { parseAndValidate } from "@/lib/api-validation";
+import { PREFIX, consoleError } from "@/lib/console";
 import { gswarmClient } from "@/lib/gswarm/client";
 
 /** Request body structure */
@@ -68,8 +69,9 @@ async function testProjectConnection(
     } catch (apiError) {
       const endTime = performance.now();
       const latencyMs = Math.round(endTime - startTime);
-      console.error(
-        "[API] testProjectConnection - API request failed:",
+      consoleError(
+        PREFIX.API,
+        "testProjectConnection - API request failed:",
         apiError,
       );
 
@@ -82,7 +84,7 @@ async function testProjectConnection(
     }
   } catch (error) {
     const endTime = performance.now();
-    console.error("[API] testProjectConnection failed:", error);
+    consoleError(PREFIX.API, "testProjectConnection failed:", error);
     return {
       success: false,
       latencyMs: Math.round(endTime - startTime),
@@ -126,7 +128,7 @@ export async function POST(request: NextRequest) {
       latencyMs: result.latencyMs,
     });
   } catch (error) {
-    console.error("[API] POST /api/projects/test failed:", error);
+    consoleError(PREFIX.API, "POST /api/projects/test failed:", error);
     return NextResponse.json(
       {
         success: false,

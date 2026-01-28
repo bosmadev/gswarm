@@ -39,6 +39,16 @@ jobs:
           pnpm build
           cp -r public .next/standalone/ 2>/dev/null || echo "[INFO] No public folder"
           cp -r .next/static .next/standalone/.next/
+          # Copy launch.sh for server control
+          cp scripts/launch.sh .next/standalone/
+          chmod +x .next/standalone/launch.sh
+          # Copy TypeScript source files for Node.js 25+ native TS execution
+          mkdir -p .next/standalone/lib/gswarm/storage
+          mkdir -p .next/standalone/scripts
+          cp lib/console.ts .next/standalone/lib/
+          cp lib/gswarm/*.ts .next/standalone/lib/gswarm/
+          cp lib/gswarm/storage/*.ts .next/standalone/lib/gswarm/storage/
+          cp scripts/test-api-keys.ts .next/standalone/scripts/
 
       - name: Deploy to Azure VM (WSL)
         uses: Burnett01/rsync-deployments@v8

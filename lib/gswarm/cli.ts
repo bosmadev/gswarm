@@ -1,9 +1,9 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 /**
  * GSwarm CLI
  *
  * Command-line interface for managing GSwarm accounts, projects, and testing.
- * Run with: pnpm gswarm [command]
+ * Run with: pnpm gswarm [command] (dev) or node lib/cli.ts [command] (VM)
  *
  * Commands:
  *   (no args)   - Interactive dashboard
@@ -15,22 +15,22 @@
  */
 
 import * as readline from "node:readline";
-import { PREFIX, consoleClear, consoleError, consoleLog } from "@/lib/console";
-import { gswarmClient } from "./client";
-import { GSWARM_CONFIG } from "./executor";
+import { PREFIX, consoleClear, consoleError, consoleLog } from "../console.ts";
+import { gswarmClient } from "./client.ts";
+import { GSWARM_CONFIG } from "./executor.ts";
 import {
   getAllGcpProjects,
   getEnabledGcpProjects,
   groupProjectsByOwner,
   invalidateProjectsCache,
-} from "./projects";
+} from "./projects.ts";
 import {
   deleteToken,
   invalidateTokenCache,
   isTokenExpired,
   loadAllTokens,
-} from "./storage/tokens";
-import type { GcpProjectInfo, StoredToken } from "./types";
+} from "./storage/tokens.ts";
+import type { GcpProjectInfo, StoredToken } from "./types.ts";
 
 // =============================================================================
 // ANSI Colors

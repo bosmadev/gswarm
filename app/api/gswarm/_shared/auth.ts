@@ -5,7 +5,7 @@
 import type { NextRequest, NextResponse } from "next/server";
 import { errorResponse } from "@/lib/gswarm/error-handler";
 import { ApiError } from "@/lib/gswarm/errors";
-import { validateApiKey } from "@/lib/gswarm/storage";
+import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 
 /**
  * Result of API authentication

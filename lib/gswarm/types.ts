@@ -195,18 +195,6 @@ export interface OAuthError {
 // =============================================================================
 
 /**
- * Project information stored in the system
- */
-export interface ProjectInfo {
-  id: string;
-  name: string;
-  apiKey: string;
-  enabled: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-/**
  * Error types for project status tracking
  */
 export type ProjectErrorType =
@@ -254,14 +242,6 @@ export interface ProjectStatus {
 
   /** Human-readable reset time (e.g., "21h10m20s") */
   quotaResetReason?: string;
-}
-
-/**
- * Result of project selection
- */
-export interface ProjectSelectionResult {
-  project: ProjectInfo;
-  fromCache: boolean;
 }
 
 /**
@@ -481,22 +461,8 @@ export interface ServiceUsageResponse {
 }
 
 // =============================================================================
-// PULSONA GSWARM TYPES
-// Source: pulsona/lib/gswarm.ts
+// GSWARM STATUS TYPES
 // =============================================================================
-
-/**
- * Error types that can occur during GSwarm API calls
- * Source: pulsona/lib/gswarm.ts lines 609-616
- */
-export type ErrorType =
-  | "rate_limit"
-  | "auth"
-  | "server"
-  | "not_logged_in"
-  | "quota_exhausted"
-  | "preview_disabled"
-  | "billing_disabled";
 
 /**
  * GSwarm connection status
@@ -530,122 +496,9 @@ export interface AccountStatus {
   rateLimitedProjects: string[];
 }
 
-/**
- * GSwarm usage metrics
- * Source: pulsona/lib/gswarm.ts lines 729-737
- */
-export interface GSwarmMetrics {
-  successCount: number;
-  errorCount: number;
-  rateLimitCount: number;
-  totalLatencyMs: number;
-  callSources: Record<string, number>;
-  quotaUsedToday: number;
-  lastUpdated: number;
-}
-
-/**
- * GSwarm API request structure
- * Source: pulsona/lib/gswarm.ts lines 1461-1486
- */
-export interface GSwarmRequest {
-  model: string;
-  request: {
-    contents: Array<{
-      role: string;
-      parts: Array<{ text?: string; thoughtSignature?: string }>;
-    }>;
-    generationConfig?: {
-      maxOutputTokens?: number;
-      temperature?: number;
-      topP?: number;
-      topK?: number;
-      responseMimeType?: string;
-      responseJsonSchema?: object;
-      thinkingConfig?: {
-        thinkingLevel?: string;
-        includeThoughts?: boolean;
-      };
-    };
-    systemInstruction?: {
-      parts: Array<{ text: string }>;
-    };
-    tools?: Array<{ googleSearch?: object }>;
-  };
-  project?: string;
-}
-
-/**
- * GSwarm API response structure
- * Source: pulsona/lib/gswarm.ts lines 1488-1511
- */
-export interface GSwarmResponse {
-  response?: {
-    candidates?: Array<{
-      content?: {
-        parts?: Array<{
-          text?: string;
-          thought?: boolean;
-          thoughtSignature?: string;
-        }>;
-      };
-      finishReason?: string;
-    }>;
-  };
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{
-        text?: string;
-        thought?: boolean;
-        thoughtSignature?: string;
-      }>;
-    };
-    finishReason?: string;
-  }>;
-}
-
 // =============================================================================
-// BATCH STORAGE TYPES
+// TOKEN REFRESH TYPES
 // =============================================================================
-
-/**
- * Batch storage result for multiple operations
- */
-export interface BatchStorageResult<T> {
-  /** Total operations attempted */
-  total: number;
-  /** Number of successful operations */
-  succeeded: number;
-  /** Number of failed operations */
-  failed: number;
-  /** Individual results */
-  results: Array<StorageResult<T>>;
-}
-
-// =============================================================================
-// HEALTH CHECK TYPES
-// =============================================================================
-
-/**
- * Health check response
- */
-export interface HealthCheckResponse {
-  status: "healthy" | "degraded" | "unhealthy";
-  timestamp: string;
-  uptime_seconds: number;
-  gswarm_status: GSwarmStatus;
-  accounts: {
-    total: number;
-    healthy: number;
-    degraded: number;
-    frozen: number;
-  };
-  projects: {
-    total: number;
-    available: number;
-    rate_limited: number;
-  };
-}
 
 /**
  * Token refresh result
@@ -655,4 +508,72 @@ export interface TokenRefreshResult {
   email: string;
   new_expiry?: number;
   error?: string;
+}
+
+// =============================================================================
+// API REQUEST/RESPONSE TYPES
+// =============================================================================
+
+/**
+ * Generation configuration for Cloud Code API requests
+ * Note: This is different from GenerationConfig which is for app-level config
+ */
+export interface ApiGenerationConfig {
+  maxOutputTokens: number;
+  temperature: number;
+  topP: number;
+  responseMimeType?: string;
+  responseJsonSchema?: Record<string, unknown>;
+  thinkingConfig?: {
+    thinkingBudget: number;
+  };
+}
+
+/**
+ * Content part in API request/response
+ */
+export interface ContentPart {
+  text?: string;
+  thought?: boolean;
+}
+
+/**
+ * GSwarm API request body format
+ */
+export interface GSwarmRequest {
+  model: string;
+  contents: Array<{
+    role: string;
+    parts: ContentPart[];
+  }>;
+  systemInstruction?: {
+    parts: ContentPart[];
+  };
+  generationConfig: ApiGenerationConfig;
+  tools?: Array<{
+    googleSearch?: Record<string, unknown>;
+  }>;
+}
+
+/**
+ * GSwarm API response format
+ */
+export interface GSwarmResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: ContentPart[];
+    };
+    finishReason?: string;
+  }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+    thoughtsTokenCount?: number;
+  };
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+  };
 }

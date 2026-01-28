@@ -12,6 +12,7 @@
 import { RotateCcw, Save, Search, Settings, Sparkles, Zap } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useNotifications } from "@/components/providers";
 import {
   Accordion,
   AccordionContent,
@@ -125,6 +126,7 @@ export function ConfigurationPanel({
   onSave,
   className,
 }: ConfigurationPanelProps) {
+  const { success, error } = useNotifications();
   const [isSaving, setIsSaving] = useState(false);
   const [openSections, setOpenSections] = useState<string[]>([
     "google-search",
@@ -146,12 +148,16 @@ export function ConfigurationPanel({
         if (onSave) {
           await onSave(values);
         }
-        // Could add toast notification here
+        success("Configuration saved successfully");
+      } catch (err) {
+        error(
+          err instanceof Error ? err.message : "Failed to save configuration",
+        );
       } finally {
         setIsSaving(false);
       }
     },
-    [onSave],
+    [onSave, success, error],
   );
 
   const handleReset = useCallback(() => {

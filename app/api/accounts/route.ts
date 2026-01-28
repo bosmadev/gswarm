@@ -8,6 +8,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import {
   getDataPath,
   listFiles,
@@ -163,7 +164,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ accounts, total: accounts.length });
   } catch (error) {
-    console.error("[API] GET /api/accounts failed:", error);
+    consoleError(PREFIX.API, "GET /api/accounts failed:", error);
     return NextResponse.json(
       {
         error: "Failed to load accounts",

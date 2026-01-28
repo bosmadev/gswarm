@@ -1,5 +1,5 @@
 import type { GSwarmConfig, StorageResult } from "../types";
-import { getDataPath, readJsonFile, writeJsonFile } from "./base";
+import { CacheManager, getDataPath, readJsonFile, writeJsonFile } from "./base";
 
 // =============================================================================
 // Constants
@@ -63,40 +63,10 @@ export const DEFAULT_CONFIG: GSwarmConfig = {
 // Cache
 // =============================================================================
 
-interface ConfigCache {
-  config: GSwarmConfig | null;
-  timestamp: number;
-}
-
-const cache: ConfigCache = {
-  config: null,
-  timestamp: 0,
-};
-
 /**
- * Checks if the cache is valid
+ * Configuration cache using CacheManager
  */
-function isCacheValid(): boolean {
-  return (
-    cache.config !== null && Date.now() - cache.timestamp < CONFIG_CACHE_TTL_MS
-  );
-}
-
-/**
- * Updates the cache with new config
- */
-function updateCache(config: GSwarmConfig): void {
-  cache.config = config;
-  cache.timestamp = Date.now();
-}
-
-/**
- * Invalidates the cache
- */
-function invalidateCache(): void {
-  cache.config = null;
-  cache.timestamp = 0;
-}
+const configCache = new CacheManager<GSwarmConfig>(CONFIG_CACHE_TTL_MS);
 
 // =============================================================================
 // Configuration Operations
@@ -163,8 +133,9 @@ export function mergeWithDefaults<T>(config: Partial<T>, defaults: T): T {
  */
 export async function loadConfig(): Promise<StorageResult<GSwarmConfig>> {
   // Return cached config if valid
-  if (isCacheValid() && cache.config) {
-    return { success: true, data: cache.config };
+  const cached = configCache.get();
+  if (cached) {
+    return { success: true, data: cached };
   }
 
   const configPath = getConfigPath();
@@ -177,7 +148,7 @@ export async function loadConfig(): Promise<StorageResult<GSwarmConfig>> {
       if (!writeResult.success) {
         return { success: false, error: writeResult.error };
       }
-      updateCache(DEFAULT_CONFIG);
+      configCache.set(DEFAULT_CONFIG);
       return { success: true, data: DEFAULT_CONFIG };
     }
     return { success: false, error: result.error };
@@ -185,7 +156,7 @@ export async function loadConfig(): Promise<StorageResult<GSwarmConfig>> {
 
   // Merge loaded config with defaults to ensure all fields exist
   const mergedConfig = mergeWithDefaults(result.data, DEFAULT_CONFIG);
-  updateCache(mergedConfig);
+  configCache.set(mergedConfig);
 
   return { success: true, data: mergedConfig };
 }
@@ -212,7 +183,7 @@ export async function updateConfig(
     return { success: false, error: writeResult.error };
   }
 
-  updateCache(updatedConfig);
+  configCache.set(updatedConfig);
   return { success: true, data: updatedConfig };
 }
 
@@ -228,7 +199,7 @@ export async function resetConfig(): Promise<StorageResult<GSwarmConfig>> {
     return { success: false, error: writeResult.error };
   }
 
-  updateCache(DEFAULT_CONFIG);
+  configCache.set(DEFAULT_CONFIG);
   return { success: true, data: DEFAULT_CONFIG };
 }
 
@@ -261,5 +232,5 @@ export function getDefaultConfig(): GSwarmConfig {
  * Useful for testing or forcing a reload
  */
 export function clearConfigCache(): void {
-  invalidateCache();
+  configCache.invalidate();
 }

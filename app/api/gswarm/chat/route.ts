@@ -11,7 +11,7 @@ import { PREFIX, consoleError } from "@/lib/console";
 import { gswarmClient } from "@/lib/gswarm/client";
 import { errorResponse } from "@/lib/gswarm/error-handler";
 import { ApiError } from "@/lib/gswarm/errors";
-import { recordMetric } from "@/lib/gswarm/storage";
+import { recordMetric } from "@/lib/gswarm/storage/metrics";
 import type { RequestMetric } from "@/lib/gswarm/types";
 import {
   addRateLimitHeaders,

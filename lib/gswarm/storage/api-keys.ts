@@ -4,7 +4,7 @@ import type {
   ApiKeyValidationResult,
   StorageResult,
 } from "../types";
-import { getDataPath, readJsonFile, writeJsonFile } from "./base";
+import { CacheManager, getDataPath, readJsonFile, writeJsonFile } from "./base";
 
 // =============================================================================
 // Constants
@@ -55,8 +55,8 @@ export interface ApiKeysStore {
 // Cache
 // =============================================================================
 
-let apiKeysCache: ApiKeysStore | null = null;
-let apiKeysCacheTime = 0;
+/** Cache manager for API keys store */
+const apiKeysCache = new CacheManager<ApiKeysStore>(API_KEYS_CACHE_TTL_MS);
 
 /**
  * Gets the file path for API keys storage
@@ -69,8 +69,7 @@ function getApiKeysPath(): string {
  * Clears the API keys cache
  */
 export function clearApiKeysCache(): void {
-  apiKeysCache = null;
-  apiKeysCacheTime = 0;
+  apiKeysCache.invalidate();
 }
 
 // =============================================================================
@@ -118,11 +117,10 @@ export function maskApiKey(key: string): string {
  * Loads the API keys store from disk with caching
  */
 async function loadApiKeysStore(): Promise<StorageResult<ApiKeysStore>> {
-  const now = Date.now();
-
   // Check cache validity
-  if (apiKeysCache && now - apiKeysCacheTime < API_KEYS_CACHE_TTL_MS) {
-    return { success: true, data: apiKeysCache };
+  const cached = apiKeysCache.get();
+  if (cached) {
+    return { success: true, data: cached };
   }
 
   const filePath = getApiKeysPath();
@@ -134,18 +132,16 @@ async function loadApiKeysStore(): Promise<StorageResult<ApiKeysStore>> {
       const emptyStore: ApiKeysStore = {
         keys: [],
         rate_limits: {},
-        updated_at: now,
+        updated_at: Date.now(),
       };
-      apiKeysCache = emptyStore;
-      apiKeysCacheTime = now;
+      apiKeysCache.set(emptyStore);
       return { success: true, data: emptyStore };
     }
     return result;
   }
 
   // Update cache
-  apiKeysCache = result.data;
-  apiKeysCacheTime = now;
+  apiKeysCache.set(result.data);
   return result;
 }
 
@@ -160,8 +156,7 @@ async function saveApiKeysStore(
 
   if (result.success) {
     // Update cache
-    apiKeysCache = store;
-    apiKeysCacheTime = Date.now();
+    apiKeysCache.set(store);
   }
 
   return result;

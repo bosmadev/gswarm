@@ -18,9 +18,9 @@ import type { StorageResult } from "../types";
 // =============================================================================
 
 /** Root directory for all data storage */
-export const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = path.join(process.cwd(), "data");
 
-/** Alias for DATA_DIR for backward compatibility */
+/** Public export for storage base directory */
 export const STORAGE_BASE_DIR = DATA_DIR;
 
 /** Default timeout for file locks in milliseconds */
@@ -127,6 +127,49 @@ export function clearCache(): void {
   const size = cache.size;
   cache.clear();
   consoleDebug(PREFIX.DEBUG, `Cache cleared (${size} entries removed)`);
+}
+
+/**
+ * Generic cache manager for storage modules
+ * Provides TTL-based caching with invalidation support
+ */
+export class CacheManager<T> {
+  private cache: T | null = null;
+  private cacheTime = 0;
+
+  constructor(private ttlMs: number) {}
+
+  get(): T | null {
+    if (this.cache && Date.now() - this.cacheTime < this.ttlMs) {
+      return this.cache;
+    }
+    return null;
+  }
+
+  set(data: T): void {
+    this.cache = data;
+    this.cacheTime = Date.now();
+  }
+
+  invalidate(): void {
+    this.cache = null;
+    this.cacheTime = 0;
+  }
+
+  isValid(): boolean {
+    return this.cache !== null && Date.now() - this.cacheTime < this.ttlMs;
+  }
+}
+
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
+
+/**
+ * Get today's date as YYYY-MM-DD string
+ */
+export function getTodayDateString(): string {
+  return new Date().toISOString().split("T")[0];
 }
 
 // =============================================================================

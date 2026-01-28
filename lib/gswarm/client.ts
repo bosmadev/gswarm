@@ -13,10 +13,14 @@ import {
   executeRequest,
   extractJsonFromResponse,
 } from "./executor";
-import { getEnabledGcpProjects } from "./projects";
-import { recordProjectError, recordProjectSuccess } from "./storage/projects";
+import {
+  getProjectSelectionStats,
+  markProjectUsed,
+  selectProjectForRequest,
+} from "./lru-selector";
+import { recordProjectError, updateProjectStatus } from "./storage/projects";
 import { getValidTokens } from "./storage/tokens";
-import type { AccountStatus, GSwarmStatus, GcpProjectInfo } from "./types";
+import type { AccountStatus, GSwarmStatus, StorageResult } from "./types";
 
 // =============================================================================
 // TYPES
@@ -86,146 +90,121 @@ export interface GSwarmStatusResponse {
 }
 
 // =============================================================================
-// LRU SELECTOR IMPLEMENTATION
+// LRU SELECTOR ADAPTER
 // =============================================================================
 
 /**
- * Simple LRU selector that works with GCP projects and tokens
+ * Creates an LruSelector adapter that uses the database-backed lru-selector.ts
+ *
+ * This adapter bridges the LruSelector interface expected by executeRequest
+ * with the well-factored functions from lru-selector.ts
  */
-class SimpleLruSelector implements LruSelector {
-  private projects: GcpProjectInfo[] = [];
-  private tokens: Map<string, string> = new Map();
-  private lastUsed: Map<string, number> = new Map();
-  private cooldowns: Map<string, number> = new Map();
+async function createLruSelectorAdapter(): Promise<LruSelector> {
+  // Pre-load tokens map for fast lookup
+  let tokensMap: Map<string, string> = new Map();
 
-  async initialize(): Promise<void> {
-    // Get enabled projects
-    this.projects = await getEnabledGcpProjects();
-
-    // Get valid tokens
+  async function refreshTokens(): Promise<void> {
     const tokensResult = await getValidTokens();
     if (tokensResult.success) {
+      tokensMap = new Map();
       for (const token of tokensResult.data) {
-        this.tokens.set(token.email, token.access_token);
+        tokensMap.set(token.email, token.access_token);
       }
     }
   }
 
-  async selectProject(): Promise<
-    | {
-        success: true;
-        data: { projectId: string; accessToken: string };
+  // Initial token load
+  await refreshTokens();
+
+  return {
+    async selectProject(): Promise<
+      StorageResult<{ projectId: string; accessToken: string; email?: string }>
+    > {
+      // Refresh tokens if map is empty (may have expired)
+      if (tokensMap.size === 0) {
+        await refreshTokens();
       }
-    | { success: false; error: string }
-  > {
-    // Ensure we have projects and tokens
-    if (this.projects.length === 0 || this.tokens.size === 0) {
-      await this.initialize();
-    }
 
-    const now = Date.now();
+      const selection = await selectProjectForRequest();
 
-    // Filter out projects in cooldown
-    const availableProjects = this.projects.filter((p) => {
-      const cooldownUntil = this.cooldowns.get(p.project_id) ?? 0;
-      return now >= cooldownUntil;
-    });
+      if (!selection) {
+        return { success: false, error: "No available projects" };
+      }
 
-    if (availableProjects.length === 0) {
-      // If all in cooldown, pick the one with soonest expiring cooldown
-      if (this.projects.length > 0) {
-        const sorted = [...this.projects].sort((a, b) => {
-          const cooldownA = this.cooldowns.get(a.project_id) ?? 0;
-          const cooldownB = this.cooldowns.get(b.project_id) ?? 0;
-          return cooldownA - cooldownB;
-        });
-        const project = sorted[0];
-        const token = this.tokens.get(project.owner_email);
-        if (token) {
+      const { project } = selection;
+      const accessToken = tokensMap.get(project.owner_email);
+
+      if (!accessToken) {
+        // Token not found, try refreshing
+        await refreshTokens();
+        const refreshedToken = tokensMap.get(project.owner_email);
+
+        if (!refreshedToken) {
           return {
-            success: true,
-            data: { projectId: project.project_id, accessToken: token },
+            success: false,
+            error: `No valid token for project ${project.project_id} (owner: ${project.owner_email})`,
           };
         }
+
+        return {
+          success: true,
+          data: {
+            projectId: project.project_id,
+            accessToken: refreshedToken,
+            email: project.owner_email,
+          },
+        };
       }
-      return { success: false, error: "No available projects" };
-    }
 
-    // Sort by last used (LRU)
-    const sorted = availableProjects.sort((a, b) => {
-      const usedA = this.lastUsed.get(a.project_id) ?? 0;
-      const usedB = this.lastUsed.get(b.project_id) ?? 0;
-      return usedA - usedB;
-    });
-
-    const project = sorted[0];
-    const token = this.tokens.get(project.owner_email);
-
-    if (!token) {
       return {
-        success: false,
-        error: `No token for project ${project.project_id}`,
+        success: true,
+        data: {
+          projectId: project.project_id,
+          accessToken,
+          email: project.owner_email,
+        },
       };
-    }
+    },
 
-    return {
-      success: true,
-      data: { projectId: project.project_id, accessToken: token },
-    };
-  }
+    async recordSuccess(projectId: string, _latencyMs: number): Promise<void> {
+      // Use markProjectUsed from lru-selector.ts which updates lastUsedAt and successCount
+      markProjectUsed(projectId).catch((err) =>
+        consoleError(
+          PREFIX.ERROR,
+          `[LruSelector] Failed to record project success: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+    },
 
-  async recordSuccess(projectId: string, _latencyMs: number): Promise<void> {
-    this.lastUsed.set(projectId, Date.now());
-    this.cooldowns.delete(projectId);
-    // Fire-and-forget: non-blocking storage write
-    recordProjectSuccess(projectId).catch((err) =>
-      consoleError(
-        PREFIX.ERROR,
-        `[LruSelector] Failed to record project success: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-    );
-  }
+    async recordError(
+      projectId: string,
+      _statusCode: number,
+      _errorType: string,
+    ): Promise<void> {
+      // Fire-and-forget: non-blocking storage write
+      recordProjectError(projectId, "server").catch((err) =>
+        consoleError(
+          PREFIX.ERROR,
+          `[LruSelector] Failed to record project error: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+    },
 
-  async recordError(
-    projectId: string,
-    _statusCode: number,
-    _errorType: string,
-  ): Promise<void> {
-    // Fire-and-forget: non-blocking storage write
-    recordProjectError(projectId, "server").catch((err) =>
-      consoleError(
-        PREFIX.ERROR,
-        `[LruSelector] Failed to record project error: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-    );
-  }
-
-  async markProjectCooldown(
-    projectId: string,
-    durationMs: number,
-  ): Promise<void> {
-    this.cooldowns.set(projectId, Date.now() + durationMs);
-  }
-
-  getAvailableCount(): number {
-    const now = Date.now();
-    return this.projects.filter((p) => {
-      const cooldownUntil = this.cooldowns.get(p.project_id) ?? 0;
-      return now >= cooldownUntil;
-    }).length;
-  }
-
-  getCooldownCount(): number {
-    const now = Date.now();
-    return this.projects.filter((p) => {
-      const cooldownUntil = this.cooldowns.get(p.project_id) ?? 0;
-      return now < cooldownUntil;
-    }).length;
-  }
-
-  getTotalCount(): number {
-    return this.projects.length;
-  }
+    async markProjectCooldown(
+      projectId: string,
+      durationMs: number,
+    ): Promise<void> {
+      // Update cooldownUntil in project status storage
+      updateProjectStatus(projectId, {
+        cooldownUntil: Date.now() + durationMs,
+      }).catch((err) =>
+        consoleError(
+          PREFIX.ERROR,
+          `[LruSelector] Failed to mark project cooldown: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+    },
+  };
 }
 
 // =============================================================================
@@ -241,12 +220,11 @@ class SimpleLruSelector implements LruSelector {
  * - Service status and availability checks
  */
 export class GSwarmClient {
-  private lruSelector: SimpleLruSelector;
+  private lruSelector: LruSelector | null = null;
   private initialized = false;
   private model: string;
 
   constructor() {
-    this.lruSelector = new SimpleLruSelector();
     this.model = GSWARM_CONFIG.model;
   }
 
@@ -254,10 +232,18 @@ export class GSwarmClient {
    * Initialize the client (lazy initialization)
    */
   private async ensureInitialized(): Promise<void> {
-    if (!this.initialized) {
-      await this.lruSelector.initialize();
+    if (!this.initialized || !this.lruSelector) {
+      this.lruSelector = await createLruSelectorAdapter();
       this.initialized = true;
     }
+  }
+
+  /**
+   * Get the LRU selector (initializes if needed)
+   */
+  private async getLruSelector(): Promise<LruSelector> {
+    await this.ensureInitialized();
+    return this.lruSelector as LruSelector;
   }
 
   /**
@@ -267,8 +253,8 @@ export class GSwarmClient {
    */
   async testConnection(): Promise<boolean> {
     try {
-      await this.ensureInitialized();
-      const result = await this.lruSelector.selectProject();
+      const selector = await this.getLruSelector();
+      const result = await selector.selectProject();
       return result.success;
     } catch (error) {
       consoleError(
@@ -290,7 +276,7 @@ export class GSwarmClient {
     prompt: string,
     options: GenerateOptions = {},
   ): Promise<GenerateResult> {
-    await this.ensureInitialized();
+    const selector = await this.getLruSelector();
 
     consoleDebug(
       PREFIX.DEBUG,
@@ -308,7 +294,7 @@ export class GSwarmClient {
       callSource: options.callSource,
     };
 
-    const result = await executeRequest(executeOptions, this.lruSelector);
+    const result = await executeRequest(executeOptions, selector);
 
     return {
       text: result.text,
@@ -373,8 +359,8 @@ export class GSwarmClient {
    */
   async isAvailable(): Promise<boolean> {
     try {
-      await this.ensureInitialized();
-      return this.lruSelector.getAvailableCount() > 0;
+      const stats = await getProjectSelectionStats();
+      return stats.available > 0;
     } catch {
       return false;
     }
@@ -386,11 +372,11 @@ export class GSwarmClient {
    * @returns Status response with project availability
    */
   async getStatus(): Promise<GSwarmStatusResponse> {
-    await this.ensureInitialized();
+    const stats = await getProjectSelectionStats();
 
-    const availableCount = this.lruSelector.getAvailableCount();
-    const cooldownCount = this.lruSelector.getCooldownCount();
-    const totalCount = this.lruSelector.getTotalCount();
+    const availableCount = stats.available;
+    const cooldownCount = stats.inCooldown;
+    const totalCount = stats.total;
 
     // Determine overall status
     let status: GSwarmStatus;
@@ -426,6 +412,7 @@ export class GSwarmClient {
    */
   async refresh(): Promise<void> {
     this.initialized = false;
+    this.lruSelector = null;
     await this.ensureInitialized();
     consoleLog(PREFIX.INFO, "[GSwarmClient] Client refreshed");
   }

@@ -9,7 +9,7 @@ import type {
   ProjectStatus,
   StorageResult,
 } from "../types";
-import { getDataPath, readJsonFile, writeJsonFile } from "./base";
+import { CacheManager, getDataPath, readJsonFile, writeJsonFile } from "./base";
 
 // =============================================================================
 // Constants
@@ -45,24 +45,15 @@ export interface ProjectStatusMap {
 // In-memory cache
 // =============================================================================
 
-let projectStatusCache: Map<string, ProjectStatus> | null = null;
-let cacheLoadedAt = 0;
+const projectCache = new CacheManager<Map<string, ProjectStatus>>(
+  PROJECT_CACHE_TTL_MS,
+);
 
 /**
  * Get the file path for project status storage
  */
 function getProjectStatusPath(): string {
   return getDataPath(PROJECT_STATUS_FILE);
-}
-
-/**
- * Check if cache is still valid
- */
-function isCacheValid(): boolean {
-  return (
-    projectStatusCache !== null &&
-    Date.now() - cacheLoadedAt < PROJECT_CACHE_TTL_MS
-  );
 }
 
 // =============================================================================
@@ -76,8 +67,9 @@ export async function loadProjectStatuses(): Promise<
   StorageResult<Map<string, ProjectStatus>>
 > {
   // Return cached data if valid
-  if (isCacheValid() && projectStatusCache) {
-    return { success: true, data: projectStatusCache };
+  const cached = projectCache.get();
+  if (cached) {
+    return { success: true, data: cached };
   }
 
   const filePath = getProjectStatusPath();
@@ -86,9 +78,9 @@ export async function loadProjectStatuses(): Promise<
   if (!result.success) {
     // File not found is not an error - return empty map
     if (result.error === "File not found") {
-      projectStatusCache = new Map();
-      cacheLoadedAt = Date.now();
-      return { success: true, data: projectStatusCache };
+      const emptyMap = new Map<string, ProjectStatus>();
+      projectCache.set(emptyMap);
+      return { success: true, data: emptyMap };
     }
     return result;
   }
@@ -100,8 +92,7 @@ export async function loadProjectStatuses(): Promise<
   }
 
   // Update cache
-  projectStatusCache = statusMap;
-  cacheLoadedAt = Date.now();
+  projectCache.set(statusMap);
 
   return { success: true, data: statusMap };
 }
@@ -148,17 +139,13 @@ export async function saveProjectStatus(
   status: ProjectStatus,
 ): Promise<StorageResult<void>> {
   const loadResult = await loadProjectStatuses();
-  if (!loadResult.success) {
-    // If file doesn't exist, start fresh
-    projectStatusCache = new Map();
-  }
-
-  const statusMap = projectStatusCache ?? new Map();
+  const statusMap = loadResult.success
+    ? loadResult.data
+    : new Map<string, ProjectStatus>();
   statusMap.set(status.projectId, status);
 
   // Update cache
-  projectStatusCache = statusMap;
-  cacheLoadedAt = Date.now();
+  projectCache.set(statusMap);
 
   // Convert to storage format
   const storageData: ProjectStatusMap = {
@@ -176,7 +163,9 @@ export async function saveProjectStatuses(
   statuses: ProjectStatus[],
 ): Promise<StorageResult<void>> {
   const loadResult = await loadProjectStatuses();
-  const statusMap = loadResult.success ? loadResult.data : new Map();
+  const statusMap = loadResult.success
+    ? loadResult.data
+    : new Map<string, ProjectStatus>();
 
   // Update all statuses
   for (const status of statuses) {
@@ -184,8 +173,7 @@ export async function saveProjectStatuses(
   }
 
   // Update cache
-  projectStatusCache = statusMap;
-  cacheLoadedAt = Date.now();
+  projectCache.set(statusMap);
 
   // Convert to storage format
   const storageData: ProjectStatusMap = {
@@ -401,8 +389,7 @@ export async function clearProjectCooldown(
  * Invalidate the in-memory cache, forcing a reload from disk
  */
 export function invalidateProjectCache(): void {
-  projectStatusCache = null;
-  cacheLoadedAt = 0;
+  projectCache.invalidate();
 }
 
 // =============================================================================
@@ -472,8 +459,7 @@ export async function getAllProjectStatuses(): Promise<ProjectStatus[]> {
  * Clear all project status data
  */
 export async function clearAllProjectStatus(): Promise<StorageResult<void>> {
-  projectStatusCache = new Map();
-  cacheLoadedAt = Date.now();
+  projectCache.set(new Map());
 
   const storageData: ProjectStatusMap = {
     projects: {},

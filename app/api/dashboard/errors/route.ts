@@ -13,7 +13,7 @@ import {
   type ErrorLogType,
   clearAllErrors,
   queryErrors,
-} from "@/lib/gswarm/storage";
+} from "@/lib/gswarm/storage/errors";
 
 // =============================================================================
 // GET HANDLER

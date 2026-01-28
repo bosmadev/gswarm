@@ -9,7 +9,6 @@
 import { PREFIX, consoleDebug, consoleError, consoleLog } from "@/lib/console";
 import {
   createDefaultStatus,
-  invalidateProjectCache,
   loadProjectStatuses,
   clearProjectCooldown as storageClearProjectCooldown,
   getAvailableProjects as storageGetAvailableProjects,
@@ -53,9 +52,6 @@ const RESOURCE_MANAGER_API = "https://cloudresourcemanager.googleapis.com/v1";
 
 /** GCP Service Usage API base URL */
 const SERVICE_USAGE_API = "https://serviceusage.googleapis.com/v1";
-
-/** Google Cloud Console base URL */
-const CONSOLE_BASE_URL = "https://console.cloud.google.com";
 
 // =============================================================================
 // In-Memory Cache for GCP Projects
@@ -198,59 +194,6 @@ export async function getAllProjectStatuses(): Promise<
 > {
   const result = await loadProjectStatuses();
   return result.success ? result.data : new Map();
-}
-
-// =============================================================================
-// Legacy Compatibility (deprecated - use new functions instead)
-// =============================================================================
-
-/**
- * @deprecated Use recordProjectSuccess instead
- */
-export async function incrementProjectSuccess(
-  projectId: string,
-): Promise<void> {
-  await recordProjectSuccess(projectId);
-}
-
-/**
- * @deprecated Use recordProjectError instead
- */
-export async function incrementProjectError(projectId: string): Promise<void> {
-  await recordProjectError(projectId, "server");
-}
-
-// =============================================================================
-// Console URL Helpers
-// =============================================================================
-
-/**
- * Gets the Google Cloud Console URL to enable the Cloud AI Companion API for a project
- *
- * @param projectId - GCP project ID
- * @returns URL to enable the API in the Google Cloud Console
- */
-export function getConsoleEnableUrl(projectId: string): string {
-  return `${CONSOLE_BASE_URL}/apis/library/${CLOUD_AI_COMPANION_API}?project=${encodeURIComponent(projectId)}`;
-}
-
-/**
- * Gets the Google Cloud Console URL for bulk API enabling
- *
- * @returns URL to the API library in Google Cloud Console
- */
-export function getBulkConsoleEnableUrl(): string {
-  return `${CONSOLE_BASE_URL}/apis/library/${CLOUD_AI_COMPANION_API}`;
-}
-
-/**
- * Gets the Google Cloud Console URL for the preview channel
- *
- * @param projectId - GCP project ID
- * @returns URL to the Gemini preview channel console
- */
-export function getPreviewChannelConsoleUrl(projectId: string): string {
-  return `${CONSOLE_BASE_URL}/gemini/aistudio?project=${encodeURIComponent(projectId)}`;
 }
 
 // =============================================================================
@@ -502,36 +445,4 @@ export function invalidateProjectsCache(): void {
   cachedProjects = [];
   projectsCacheTime = 0;
   consoleDebug(PREFIX.DEBUG, "GCP projects cache invalidated");
-}
-
-/**
- * Invalidate the project status cache
- * Forces a reload from disk on next access
- */
-export function invalidateStatusCache(): void {
-  invalidateProjectCache();
-  consoleDebug(PREFIX.DEBUG, "Project status cache invalidated");
-}
-
-/**
- * Gets the current GCP projects cache status
- *
- * @returns Object with cache status information
- */
-export function getProjectsCacheStatus(): {
-  cached: boolean;
-  count: number;
-  age_ms: number;
-  expires_in_ms: number;
-} {
-  const now = Date.now();
-  const age = now - projectsCacheTime;
-  const expiresIn = Math.max(0, PROJECTS_CACHE_DURATION - age);
-
-  return {
-    cached: cachedProjects.length > 0 && age < PROJECTS_CACHE_DURATION,
-    count: cachedProjects.length,
-    age_ms: projectsCacheTime > 0 ? age : 0,
-    expires_in_ms: projectsCacheTime > 0 ? expiresIn : 0,
-  };
 }

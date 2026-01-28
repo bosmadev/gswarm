@@ -10,6 +10,15 @@
 export async function register() {
   // Only run on server
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Validate environment variables at startup (skip during build and test)
+    if (
+      process.env.NODE_ENV !== "test" &&
+      process.env.NEXT_PHASE !== "phase-production-build"
+    ) {
+      const { envValidator } = await import("@/lib/env-validator");
+      envValidator.validateAndPrint();
+    }
+
     const { startRefreshService } = await import(
       "@/lib/gswarm/token-refresh-service"
     );

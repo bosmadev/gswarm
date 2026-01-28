@@ -9,6 +9,7 @@ import * as path from "node:path";
 import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
 import type { StorageResult, StoredToken, TokenData } from "../types";
 import {
+  CacheManager,
   STORAGE_BASE_DIR,
   deleteFile,
   ensureDir,
@@ -38,11 +39,10 @@ const DEFAULT_EXPIRES_IN = 3600;
 // Cache
 // =============================================================================
 
-/** In-memory token cache */
-let tokenCache: Map<string, StoredToken> | null = null;
-
-/** Timestamp of last cache update */
-let cacheTimestamp = 0;
+/** Token cache using CacheManager */
+const tokenCacheManager = new CacheManager<Map<string, StoredToken>>(
+  TOKEN_CACHE_TTL_MS,
+);
 
 // =============================================================================
 // Helper Functions
@@ -108,12 +108,10 @@ export function getTokenExpiryTime(token: StoredToken): number {
 }
 
 /**
- * Checks if the token cache is still valid
+ * Gets the cached tokens if valid
  */
-function isCacheValid(): boolean {
-  return (
-    tokenCache !== null && Date.now() - cacheTimestamp < TOKEN_CACHE_TTL_MS
-  );
+function getCachedTokens(): Map<string, StoredToken> | null {
+  return tokenCacheManager.get();
 }
 
 /**
@@ -136,9 +134,10 @@ export async function loadAllTokens(): Promise<
   StorageResult<Map<string, StoredToken>>
 > {
   // Return cached tokens if valid
-  if (isCacheValid() && tokenCache) {
+  const cachedTokens = getCachedTokens();
+  if (cachedTokens) {
     consoleDebug(PREFIX.DEBUG, "Returning cached tokens");
-    return { success: true, data: tokenCache };
+    return { success: true, data: cachedTokens };
   }
 
   const tokensDir = getTokensDir();
@@ -183,8 +182,7 @@ export async function loadAllTokens(): Promise<
   }
 
   // Update cache
-  tokenCache = tokens;
-  cacheTimestamp = Date.now();
+  tokenCacheManager.set(tokens);
 
   consoleDebug(PREFIX.DEBUG, `Loaded ${tokens.size} tokens from storage`);
   return { success: true, data: tokens };
@@ -200,8 +198,9 @@ export async function loadToken(
   email: string,
 ): Promise<StorageResult<StoredToken>> {
   // Check cache first
-  if (isCacheValid() && tokenCache) {
-    const cached = tokenCache.get(email);
+  const cachedTokens = getCachedTokens();
+  if (cachedTokens) {
+    const cached = cachedTokens.get(email);
     if (cached) {
       return { success: true, data: cached };
     }
@@ -222,8 +221,9 @@ export async function loadToken(
   }
 
   // Update cache if it exists
-  if (tokenCache) {
-    tokenCache.set(email, token);
+  const existingCache = getCachedTokens();
+  if (existingCache) {
+    existingCache.set(email, token);
   }
 
   return { success: true, data: token };
@@ -262,8 +262,9 @@ export async function saveToken(
   }
 
   // Update cache
-  if (tokenCache) {
-    tokenCache.set(email, storedToken);
+  const existingCache = getCachedTokens();
+  if (existingCache) {
+    existingCache.set(email, storedToken);
   }
 
   consoleDebug(PREFIX.DEBUG, `Saved token for ${email}`);
@@ -285,8 +286,9 @@ export async function deleteToken(email: string): Promise<StorageResult<void>> {
   }
 
   // Remove from cache
-  if (tokenCache) {
-    tokenCache.delete(email);
+  const existingCache = getCachedTokens();
+  if (existingCache) {
+    existingCache.delete(email);
   }
 
   consoleDebug(PREFIX.DEBUG, `Deleted token for ${email}`);
@@ -323,8 +325,9 @@ export async function markTokenInvalid(
   }
 
   // Update cache
-  if (tokenCache) {
-    tokenCache.set(email, token);
+  const existingCache = getCachedTokens();
+  if (existingCache) {
+    existingCache.set(email, token);
   }
 
   consoleDebug(
@@ -410,7 +413,6 @@ export async function getTokensNeedingRefresh(
  * Invalidates the token cache, forcing a reload on next access
  */
 export function invalidateTokenCache(): void {
-  tokenCache = null;
-  cacheTimestamp = 0;
+  tokenCacheManager.invalidate();
   consoleDebug(PREFIX.DEBUG, "Token cache invalidated");
 }

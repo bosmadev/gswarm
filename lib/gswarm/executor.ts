@@ -10,7 +10,12 @@
 
 import { PREFIX, consoleDebug, consoleError, consoleWarn } from "@/lib/console";
 import { markTokenInvalid } from "./storage/tokens";
-import type { StorageResult } from "./types";
+import type {
+  ApiGenerationConfig,
+  GSwarmRequest,
+  GSwarmResponse,
+  StorageResult,
+} from "./types";
 
 // =============================================================================
 // CONSTANTS
@@ -56,69 +61,6 @@ export const GSWARM_CONFIG = {
 // =============================================================================
 // TYPES
 // =============================================================================
-
-/**
- * Generation configuration for API requests
- */
-export interface GenerationConfig {
-  maxOutputTokens: number;
-  temperature: number;
-  topP: number;
-  responseMimeType?: string;
-  responseJsonSchema?: Record<string, unknown>;
-  thinkingConfig?: {
-    thinkingBudget: number;
-  };
-}
-
-/**
- * Content part in request/response
- */
-export interface ContentPart {
-  text?: string;
-  thought?: boolean;
-}
-
-/**
- * GSwarm API request body format
- */
-export interface GSwarmRequest {
-  model: string;
-  contents: Array<{
-    role: string;
-    parts: ContentPart[];
-  }>;
-  systemInstruction?: {
-    parts: ContentPart[];
-  };
-  generationConfig: GenerationConfig;
-  tools?: Array<{
-    googleSearch?: Record<string, unknown>;
-  }>;
-}
-
-/**
- * GSwarm API response format
- */
-export interface GSwarmResponse {
-  candidates?: Array<{
-    content?: {
-      parts?: ContentPart[];
-    };
-    finishReason?: string;
-  }>;
-  usageMetadata?: {
-    promptTokenCount?: number;
-    candidatesTokenCount?: number;
-    totalTokenCount?: number;
-    thoughtsTokenCount?: number;
-  };
-  error?: {
-    code?: number;
-    message?: string;
-    status?: string;
-  };
-}
 
 /**
  * Execute request options
@@ -208,9 +150,9 @@ export interface LruSelector {
  * @returns Complete generation configuration
  */
 export function buildGenerationConfig(
-  overrides?: Partial<GenerationConfig>,
-): GenerationConfig {
-  const config: GenerationConfig = {
+  overrides?: Partial<ApiGenerationConfig>,
+): ApiGenerationConfig {
+  const config: ApiGenerationConfig = {
     maxOutputTokens:
       overrides?.maxOutputTokens ?? GSWARM_CONFIG.maxOutputTokens,
     temperature: overrides?.temperature ?? GSWARM_CONFIG.temperature,

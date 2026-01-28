@@ -212,35 +212,3 @@ export async function getProjectSelectionStats(): Promise<ProjectSelectionStats>
     total: allProjects.length,
   };
 }
-
-/**
- * Clear the selection cache (useful for testing or forced refresh)
- */
-export function clearSelectionCache(): void {
-  selectionCache = null;
-}
-
-/**
- * Get detailed information about all projects and their selection eligibility
- *
- * @returns Array of projects with their status and eligibility info
- */
-export async function getProjectSelectionDetails(): Promise<
-  Array<{
-    project: GcpProjectInfo;
-    status: ProjectStatus | null;
-    inCooldown: boolean;
-    cooldownUntil: number;
-  }>
-> {
-  const allProjects = await getEnabledGcpProjects();
-
-  return Promise.all(
-    allProjects.map(async (project: GcpProjectInfo) => ({
-      project,
-      status: await getProjectStatus(project.project_id),
-      inCooldown: await isProjectInCooldown(project.project_id),
-      cooldownUntil: await getProjectCooldownUntil(project.project_id),
-    })),
-  );
-}

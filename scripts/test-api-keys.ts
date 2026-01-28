@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 /**
  * API Keys Testing Script
  * Test and interact with the API Keys CRUD endpoints
@@ -13,7 +13,7 @@ import {
   YELLOW,
   consoleError,
   consoleLog,
-} from "../lib/console";
+} from "../lib/console.ts";
 
 const BASE_URL = process.env.API_URL || "http://localhost:3000";
 const API_KEYS_URL = `${BASE_URL}/api/api-keys`;

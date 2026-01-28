@@ -9,9 +9,14 @@ import * as path from "node:path";
 import type { StorageResult } from "../types";
 import {
   deleteFile,
+  getFromCache,
   getStoragePath,
+  getTodayDateString,
+  invalidateCache,
+  invalidateCachePattern,
   listFiles,
   readJsonFile,
+  setCache,
   writeJsonFile,
 } from "./base";
 
@@ -123,26 +128,14 @@ export const ERRORS_CACHE_TTL_MS = 30_000;
 export const MAX_ERRORS_PER_DAY = 10_000;
 
 // =============================================================================
-// IN-MEMORY CACHE
-// =============================================================================
-
-interface ErrorsCache {
-  data: DailyErrorLog;
-  loadedAt: number;
-}
-
-const errorsCache = new Map<string, ErrorsCache>();
-
-// =============================================================================
-// HELPER FUNCTIONS
+// CACHE KEY HELPERS
 // =============================================================================
 
 /**
- * Gets today's date as YYYY-MM-DD string
+ * Gets the cache key for errors on a specific date
  */
-export function getTodayDateString(): string {
-  const now = new Date();
-  return now.toISOString().split("T")[0];
+function getErrorsCacheKey(date: string): string {
+  return `errors:${date}`;
 }
 
 /**
@@ -184,11 +177,12 @@ export async function loadErrorLog(
 ): Promise<StorageResult<DailyErrorLog>> {
   const targetDate = date || getTodayDateString();
   const filePath = getErrorsPath(targetDate);
+  const cacheKey = getErrorsCacheKey(targetDate);
 
   // Check cache
-  const cached = errorsCache.get(targetDate);
-  if (cached && Date.now() - cached.loadedAt < ERRORS_CACHE_TTL_MS) {
-    return { success: true, data: cached.data };
+  const cached = getFromCache<DailyErrorLog>(cacheKey);
+  if (cached) {
+    return { success: true, data: cached };
   }
 
   const result = await readJsonFile<DailyErrorLog>(filePath);
@@ -205,10 +199,7 @@ export async function loadErrorLog(
   }
 
   // Update cache
-  errorsCache.set(targetDate, {
-    data: result.data,
-    loadedAt: Date.now(),
-  });
+  setCache(cacheKey, result.data, ERRORS_CACHE_TTL_MS);
 
   return result;
 }
@@ -265,10 +256,7 @@ export async function recordError(
   }
 
   // Update cache
-  errorsCache.set(errorDate, {
-    data: dailyLog,
-    loadedAt: Date.now(),
-  });
+  setCache(getErrorsCacheKey(errorDate), dailyLog, ERRORS_CACHE_TTL_MS);
 
   return { success: true, data: errorEntry };
 }
@@ -377,10 +365,7 @@ export async function clearTodaysErrors(): Promise<StorageResult<void>> {
   }
 
   // Update cache
-  errorsCache.set(today, {
-    data: emptyLog,
-    loadedAt: Date.now(),
-  });
+  setCache(getErrorsCacheKey(today), emptyLog, ERRORS_CACHE_TTL_MS);
 
   return { success: true, data: undefined };
 }
@@ -412,7 +397,7 @@ export async function clearAllErrors(): Promise<StorageResult<number>> {
       // Remove from cache
       const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.json$/);
       if (dateMatch) {
-        errorsCache.delete(dateMatch[1]);
+        invalidateCache(getErrorsCacheKey(dateMatch[1]));
       }
     } else if (deleteResult.error) {
       errors.push(deleteResult.error);
@@ -466,7 +451,7 @@ export async function cleanupOldErrors(
       if (deleteResult.success) {
         deletedCount++;
         // Remove from cache
-        errorsCache.delete(fileDate);
+        invalidateCache(getErrorsCacheKey(fileDate));
       } else if (deleteResult.error) {
         errors.push(deleteResult.error);
       }
@@ -488,8 +473,9 @@ export async function cleanupOldErrors(
  */
 export function invalidateErrorsCache(date?: string): void {
   if (date) {
-    errorsCache.delete(date);
+    invalidateCache(getErrorsCacheKey(date));
   } else {
-    errorsCache.clear();
+    // Clear all errors cache entries
+    invalidateCachePattern(/^errors:/);
   }
 }
