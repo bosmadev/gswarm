@@ -1,3 +1,13 @@
+/**
+ * @file lib/gswarm/storage/config.ts
+ * @version 1.0
+ * @description GSwarm configuration storage with deep merge support.
+ *
+ * Manages the GSwarm configuration file including generation parameters,
+ * rate limits, cooldown settings, and system prompts. All operations use
+ * in-memory caching with a configurable TTL.
+ */
+
 import type { GSwarmConfig, StorageResult } from "../types";
 import { CacheManager, getDataPath, readJsonFile, writeJsonFile } from "./base";
 
@@ -127,9 +137,19 @@ export function mergeWithDefaults<T>(config: Partial<T>, defaults: T): T {
 }
 
 /**
- * Loads configuration from storage
- * Creates default configuration if it doesn't exist
+ * Loads configuration from storage with caching.
+ * Creates and persists the default configuration if it doesn't exist.
+ * Missing fields are merged with defaults to ensure all keys are present.
+ *
  * @returns The loaded or created configuration
+ *
+ * @example
+ * ```ts
+ * const result = await loadConfig();
+ * if (result.success) {
+ *   console.log("Max tokens:", result.data.generation.maxTokens);
+ * }
+ * ```
  */
 export async function loadConfig(): Promise<StorageResult<GSwarmConfig>> {
   // Return cached config if valid
@@ -162,10 +182,21 @@ export async function loadConfig(): Promise<StorageResult<GSwarmConfig>> {
 }
 
 /**
- * Updates configuration with partial updates
- * Merges updates with existing configuration
- * @param updates - Partial configuration updates
- * @returns The updated configuration
+ * Updates configuration with partial updates.
+ * Deep-merges updates with existing configuration.
+ *
+ * @param updates - Partial configuration updates to apply
+ * @returns The fully merged updated configuration
+ *
+ * @example
+ * ```ts
+ * const result = await updateConfig({
+ *   generation: { maxTokens: 16384, temperature: 0.7 },
+ * });
+ * if (result.success) {
+ *   console.log("Updated max tokens:", result.data.generation.maxTokens);
+ * }
+ * ```
  */
 export async function updateConfig(
   updates: Partial<GSwarmConfig>,

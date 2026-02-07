@@ -1,11 +1,64 @@
 /**
- * Shared authentication utilities for GSwarm API routes
+ * @file app/api/gswarm/_shared/auth.ts
+ * @version 1.0
+ * @description Shared authentication and CORS utilities for GSwarm API routes.
+ * Provides API key validation, rate limit headers, and CORS preflight handling.
  */
 
 import type { NextRequest, NextResponse } from "next/server";
+import { NextResponse as NextResponseImport } from "next/server";
 import { errorResponse } from "@/lib/gswarm/error-handler";
 import { ApiError } from "@/lib/gswarm/errors";
 import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
+
+// =============================================================================
+// CORS Configuration
+// =============================================================================
+
+/**
+ * Default CORS headers for public API routes.
+ * Allows cross-origin access for API consumers.
+ */
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Authorization, X-Requested-With",
+  "Access-Control-Max-Age": "86400",
+};
+
+/**
+ * Creates a CORS preflight response for OPTIONS requests.
+ * Call this from OPTIONS handlers in API routes that need cross-origin access.
+ *
+ * @returns A 204 No Content response with CORS headers
+ *
+ * @example
+ * ```ts
+ * export function OPTIONS() {
+ *   return corsPreflightResponse();
+ * }
+ * ```
+ */
+export function corsPreflightResponse(): NextResponse {
+  return new NextResponseImport(null, {
+    status: 204,
+    headers: CORS_HEADERS,
+  });
+}
+
+/**
+ * Adds CORS headers to an existing response.
+ *
+ * @param response - The response to add CORS headers to
+ * @returns The response with CORS headers added
+ */
+export function addCorsHeaders(response: NextResponse): NextResponse {
+  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+    response.headers.set(key, value);
+  }
+  return response;
+}
 
 /**
  * Result of API authentication
@@ -19,8 +72,19 @@ export interface AuthResult {
 }
 
 /**
- * Extracts API key from Authorization header
- * Supports both "Bearer <key>" and raw key formats
+ * Extracts API key from Authorization header.
+ * Supports both "Bearer &lt;key&gt;" and raw key formats.
+ *
+ * @param request - The incoming Next.js request
+ * @returns The extracted API key string, or null if not present
+ *
+ * @example
+ * ```ts
+ * const apiKey = extractApiKey(request);
+ * if (!apiKey) {
+ *   return NextResponse.json({ error: "Missing API key" }, { status: 401 });
+ * }
+ * ```
  */
 export function extractApiKey(request: NextRequest): string | null {
   const authHeader = request.headers.get("authorization");
@@ -38,8 +102,12 @@ export function extractApiKey(request: NextRequest): string | null {
 }
 
 /**
- * Extracts client IP from request headers
- * Checks common proxy headers first, then falls back to request IP
+ * Extracts client IP from request headers.
+ * Checks common proxy headers first (X-Forwarded-For, X-Real-IP),
+ * then falls back to X-Client-IP or "unknown".
+ *
+ * @param request - The incoming Next.js request
+ * @returns The client IP address string, or "unknown" if not determinable
  */
 export function extractClientIp(request: NextRequest): string {
   // Check forwarded headers (common in production with proxies)
@@ -59,8 +127,21 @@ export function extractClientIp(request: NextRequest): string {
 }
 
 /**
- * Validates API key and IP address for a request
- * Returns authentication result with key info or error
+ * Validates API key and IP address for a request.
+ * Performs full authentication including key validation, IP allowlist check,
+ * endpoint permissions, and rate limiting.
+ *
+ * @param request - The incoming Next.js request
+ * @param endpoint - The API endpoint path being accessed (e.g., "/api/gswarm/generate")
+ * @returns Authentication result with key name on success, or ApiError on failure
+ *
+ * @example
+ * ```ts
+ * const auth = await authenticateRequest(request, "/api/gswarm/generate");
+ * if (!auth.success) {
+ *   return errorResponse(auth.error);
+ * }
+ * ```
  */
 export async function authenticateRequest(
   request: NextRequest,
@@ -139,7 +220,12 @@ export function rateLimitResponse(rateLimitReset?: number): NextResponse {
 }
 
 /**
- * Adds rate limit headers to a response
+ * Adds rate limit headers to a response.
+ *
+ * @param response - The Next.js response to add headers to
+ * @param remaining - Number of remaining requests in the current window
+ * @param reset - Unix timestamp when the rate limit window resets
+ * @returns The response with rate limit headers added
  */
 export function addRateLimitHeaders(
   response: NextResponse,

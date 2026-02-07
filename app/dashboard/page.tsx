@@ -8,6 +8,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import SharedLayout from "@/app/shared";
 import { DashboardShell } from "./components/dashboard-shell";
 import { DashboardTabs } from "./components/dashboard-tabs";
 
@@ -26,8 +27,10 @@ export default async function DashboardPage() {
   }
 
   return (
-    <DashboardShell>
-      <DashboardTabs />
-    </DashboardShell>
+    <SharedLayout>
+      <DashboardShell>
+        <DashboardTabs />
+      </DashboardShell>
+    </SharedLayout>
   );
 }

@@ -1,21 +1,34 @@
 /**
- * Launch Script
+ * Launch Script - Unified Server Entry Point
  *
- * Interactive launch tool with:
- * - Dev server mode (hot reload)
- * - Production server mode
- * - Cloudflare tunnel support
- * - Automatic process cleanup
- * - ALL 4 browsers enabled by default
+ * TTY terminal  → Interactive TUI menu (dev/debug/production/tunnel)
+ * Non-TTY       → Auto-starts production server (systemd, etc.)
+ * CLI argument  → Daemon control (start/stop/restart/status/logs/fg)
  *
- * Usage: pnpm launch
- *        pnpm launch --only playwriter
- *        pnpm launch --skip chrome-mcp
+ * Usage:
+ *   pnpm launch                 # TUI menu
+ *   node scripts/launch.ts start|stop|restart|status|logs|fg
+ *
+ * cPanel (Passenger):
+ *   Startup file field expects .js — use a wrapper:
+ *     // app.js
+ *     require("child_process").execSync(
+ *       "node --experimental-transform-types scripts/launch.ts",
+ *       { stdio: "inherit" }
+ *     );
+ *   cPanel GUI fields:
+ *     Application root:         /home/user/gswarm-api
+ *     Application startup file: app.js
+ *     Node.js version:          23+
+ *
+ * Logs: error.log — auto-rotated >10MB, cleaned >14 days, cleanup every 6h.
+ *   Configure via ERROR_LOG_MAX_SIZE_MB / ERROR_LOG_MAX_AGE_DAYS in .env.
  */
 
 import type { ChildProcess } from "node:child_process";
 import { execSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -28,7 +41,208 @@ import {
   RED,
   RESET,
   YELLOW,
-} from "../lib/console";
+} from "../lib/console.ts";
+
+// =============================================================================
+// LOG CLEANUP FUNCTIONS (inlined for standalone Node.js execution)
+// =============================================================================
+
+/**
+ * Synchronous log rotation. Rotates error.log if it exceeds maxSizeBytes.
+ */
+function rotateLogSync(
+  logPath: string,
+  maxSizeBytes = 10 * 1024 * 1024,
+): boolean {
+  try {
+    if (!fs.existsSync(logPath)) return false;
+    const stats = fs.statSync(logPath);
+    if (stats.size > maxSizeBytes) {
+      const backup = `${logPath}.1`;
+      if (fs.existsSync(backup)) fs.unlinkSync(backup);
+      fs.renameSync(logPath, backup);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Synchronous cleanup of old log backups (error.log.* files).
+ */
+function cleanOldLogsSync(logDir: string, retentionDays = 14): number {
+  try {
+    const files = fs.readdirSync(logDir);
+    const now = Date.now();
+    const maxAge = retentionDays * 24 * 60 * 60 * 1000;
+    let removed = 0;
+    for (const file of files) {
+      if (!file.startsWith("error.log.")) continue;
+      const filePath = path.join(logDir, file);
+      const stat = fs.statSync(filePath);
+      if (now - stat.mtimeMs > maxAge) {
+        fs.unlinkSync(filePath);
+        removed++;
+      }
+    }
+    return removed;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Synchronous cleanup of error logs based on age and size.
+ */
+function cleanupErrorLogsSync(
+  projectRoot: string,
+  maxAgeDays = 14,
+  maxSizeBytes = 10 * 1024 * 1024,
+): { rotated: string[]; deleted: string[]; truncated: string[] } {
+  const result = {
+    rotated: [] as string[],
+    deleted: [] as string[],
+    truncated: [] as string[],
+  };
+  const logPaths = [
+    path.join(projectRoot, "error.log"),
+    path.join(projectRoot, ".next", "standalone", "error.log"),
+  ];
+  for (const logPath of logPaths) {
+    if (!fs.existsSync(logPath)) continue;
+    try {
+      const stats = fs.statSync(logPath);
+      const ageDays = (Date.now() - stats.mtimeMs) / 86_400_000;
+      if (ageDays > maxAgeDays) {
+        fs.unlinkSync(logPath);
+        result.deleted.push(logPath);
+        continue;
+      }
+      if (stats.size > maxSizeBytes) {
+        const content = fs.readFileSync(logPath, "utf-8");
+        const cut = content.indexOf("\n", Math.floor(content.length / 2));
+        if (cut !== -1) {
+          fs.writeFileSync(logPath, content.slice(cut + 1));
+          result.truncated.push(logPath);
+        }
+      }
+    } catch {
+      /* Skip on error */
+    }
+  }
+  if (rotateLogSync(path.join(projectRoot, "error.log"), maxSizeBytes)) {
+    result.rotated.push(path.join(projectRoot, "error.log"));
+  }
+  cleanOldLogsSync(projectRoot, maxAgeDays);
+  return result;
+}
+
+/**
+ * Clean old JSON files from a data directory (metrics, errors).
+ */
+function cleanDataFolder(dataDir: string, retentionDays = 14): number {
+  try {
+    if (!fs.existsSync(dataDir)) return 0;
+    const files = fs.readdirSync(dataDir);
+    const now = Date.now();
+    const maxAge = retentionDays * 24 * 60 * 60 * 1000;
+    let removed = 0;
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const filePath = path.join(dataDir, file);
+      try {
+        const stat = fs.statSync(filePath);
+        if (now - stat.mtimeMs > maxAge) {
+          fs.unlinkSync(filePath);
+          removed++;
+        }
+      } catch {
+        /* Skip individual file errors */
+      }
+    }
+    return removed;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Clean stale temp files (.tmp.*) older than 1 hour.
+ */
+function cleanStaleTempFiles(dataDir: string): number {
+  try {
+    if (!fs.existsSync(dataDir)) return 0;
+    const files = fs.readdirSync(dataDir);
+    const now = Date.now();
+    const maxAge = 60 * 60 * 1000; // 1 hour
+    let removed = 0;
+    for (const file of files) {
+      if (!/\.tmp\.\d+$/.test(file)) continue;
+      const filePath = path.join(dataDir, file);
+      try {
+        const stat = fs.statSync(filePath);
+        if (now - stat.mtimeMs > maxAge) {
+          fs.unlinkSync(filePath);
+          removed++;
+        }
+      } catch {
+        /* Skip individual file errors */
+      }
+    }
+    return removed;
+  } catch {
+    return 0;
+  }
+}
+
+/** Background cleanup interval handle */
+let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Run full cleanup cycle (error.log + data folders).
+ */
+function runCleanupCycle(): void {
+  const projectRoot = path.join(import.meta.dirname, "..");
+  const dataDir = path.join(projectRoot, "data");
+  const retentionDays = Number(dotenvVars.ERROR_LOG_MAX_AGE_DAYS) || 14;
+  const maxSizeBytes =
+    (Number(dotenvVars.ERROR_LOG_MAX_SIZE_MB) || 10) * 1024 * 1024;
+
+  // Clean error.log files
+  cleanupErrorLogsSync(projectRoot, retentionDays, maxSizeBytes);
+
+  // Clean data folders
+  cleanDataFolder(path.join(dataDir, "errors"), retentionDays);
+  cleanDataFolder(path.join(dataDir, "metrics"), retentionDays);
+
+  // Clean stale temp files
+  cleanStaleTempFiles(dataDir);
+  cleanStaleTempFiles(path.join(dataDir, "errors"));
+  cleanStaleTempFiles(path.join(dataDir, "metrics"));
+}
+
+/**
+ * Start background cleanup interval (every 6 hours).
+ */
+function startBackgroundCleanup(): void {
+  if (cleanupInterval) return;
+  const intervalMs = 6 * 60 * 60 * 1000; // 6 hours
+  cleanupInterval = setInterval(runCleanupCycle, intervalMs);
+  // Run initial cleanup after 10 seconds
+  setTimeout(runCleanupCycle, 10_000);
+}
+
+/**
+ * Stop background cleanup interval.
+ */
+function stopBackgroundCleanup(): void {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+  }
+}
 
 // =============================================================================
 // CONFIGURATION
@@ -41,61 +255,79 @@ const SYSTEM_VERSION: string = packageJson.version;
 const DISPLAY_NAME: string = packageJson.displayName;
 const DESCRIPTION: string = packageJson.description;
 
-// Server port (edit this to change port for all modes)
-const SERVER_PORT = 3000;
+// .env parser - tsx runs outside Next.js runtime, so we need our own
+function loadDotenv(): Record<string, string> {
+  const envPath = path.join(import.meta.dirname, "..", ".env");
+  const result: Record<string, string> = {};
+  if (!fs.existsSync(envPath)) return result;
+  const content = fs.readFileSync(envPath, "utf-8");
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIndex = trimmed.indexOf("=");
+    if (eqIndex === -1) continue;
+    const key = trimmed.slice(0, eqIndex).trim();
+    let value = trimmed.slice(eqIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (value.startsWith("encrypted:")) continue;
+    result[key] = value;
+  }
+  return result;
+}
+const dotenvVars = loadDotenv();
+
+/** Running in standalone/bundled mode (no interactive terminal) */
+const STANDALONE_MODE =
+  process.env.STANDALONE === "true" || !process.stdin.isTTY;
+
+/** Graphics enabled only in interactive terminal mode */
+const GRAPHICS_ENABLED = !STANDALONE_MODE && process.stdout.isTTY;
+
+// Server port - centralized from .env, with fallback chain:
+// 1. PORT from .env file
+// 2. GLOBAL_PORT from environment variable
+// 3. Extracted from package.json scripts
+// 4. Default: 3000
+function getServerPort(): number {
+  // Priority 1: .env GLOBAL_PORT variable
+  if (dotenvVars.GLOBAL_PORT) {
+    const port = Number.parseInt(dotenvVars.GLOBAL_PORT, 10);
+    if (!Number.isNaN(port) && port > 0) return port;
+  }
+  // Priority 2: Environment variable (GLOBAL_PORT or legacy PORT)
+  const envPort = process.env.GLOBAL_PORT || process.env.PORT;
+  if (envPort) {
+    const port = Number.parseInt(envPort, 10);
+    if (!Number.isNaN(port) && port > 0) return port;
+  }
+  // Priority 3: Extract from package.json scripts (legacy fallback)
+  const scripts = packageJson.scripts || {};
+  for (const name of ["dev", "start"]) {
+    const script = scripts[name];
+    if (!script) continue;
+    const match = script.match(/--port\s+(\d+)/);
+    if (match) return Number.parseInt(match[1], 10);
+  }
+  return 3000;
+}
+const SERVER_PORT = getServerPort();
 
 // Cloudflare Tunnel Configuration (customize per project)
-const TUNNEL_NAME = "gswarm-api";
-const TUNNEL_ORIGIN = `http://localhost:${SERVER_PORT}`;
-const TUNNEL_PUBLIC_URL = "https://api.gswarm.dev";
-
-// =============================================================================
-// BROWSER CONFIGURATION
-// =============================================================================
-
-interface BrowserConfig {
-  id: string;
-  name: string;
-  command: string;
-  args: string[];
-  enabled: boolean;
-  color: string;
-}
-
-const BROWSERS: BrowserConfig[] = [
-  {
-    id: "system",
-    name: "System Browser",
-    command: "xdg-open",
-    args: [`http://localhost:${SERVER_PORT}`],
-    enabled: true,
-    color: CYAN,
-  },
-  {
-    id: "playwriter",
-    name: "Playwriter MCP",
-    command: "npx",
-    args: ["playwriter"],
-    enabled: true,
-    color: MAGENTA,
-  },
-  {
-    id: "agent-browser",
-    name: "Agent Browser",
-    command: "npx",
-    args: ["@anthropic/agent-browser"],
-    enabled: true,
-    color: GREEN,
-  },
-  {
-    id: "chrome-mcp",
-    name: "Chrome MCP",
-    command: "npx",
-    args: ["@anthropic/chrome-mcp"],
-    enabled: true,
-    color: YELLOW,
-  },
-];
+const TUNNEL_NAME = packageJson.name;
+const TUNNEL_ORIGIN = `http://127.0.0.1:${SERVER_PORT}`;
+// GLOBAL_URL (no port) + GLOBAL_PORT = full URL
+// Production HTTPS domains don't need port (443 is implicit)
+const TUNNEL_PUBLIC_URL = (() => {
+  const url = (dotenvVars.GLOBAL_URL || "http://localhost").replace(/\/$/, "");
+  // HTTPS production domains don't need explicit port
+  if (url.startsWith("https://")) return url;
+  return `${url}:${SERVER_PORT}`;
+})();
 
 // =============================================================================
 // INTERFACES
@@ -116,32 +348,59 @@ interface SystemStats {
 // GLOBAL STATE
 // =============================================================================
 
+const PID_FILE = path.join(import.meta.dirname, "..", ".server.pid");
+
 let childProcess: ChildProcess | null = null;
-const browserProcesses: Map<string, ChildProcess> = new Map();
+let agentServerProcess: ChildProcess | null = null;
 let isInMenu = false;
+let isReturningToMenu = false;
+let isServerLaunching = false;
 let stdinListenerActive = false;
 let hieroglyphAnimationInterval: NodeJS.Timeout | null = null;
 let currentAnimationFrame = 0;
 
-// Parse CLI args
-const args = process.argv.slice(2);
-const onlyBrowser = args.find((a) => a.startsWith("--only="))?.split("=")[1];
-const skipBrowsers = args
-  .filter((a) => a.startsWith("--skip="))
-  .map((a) => a.split("=")[1]);
+// =============================================================================
+// LOG MANAGEMENT (startup cleanup)
+// =============================================================================
 
-// Apply CLI flags to browser config
-if (onlyBrowser) {
-  for (const browser of BROWSERS) {
-    browser.enabled = browser.id === onlyBrowser;
-  }
-} else if (skipBrowsers.length > 0) {
-  for (const browser of BROWSERS) {
-    if (skipBrowsers.includes(browser.id)) {
-      browser.enabled = false;
-    }
+const LOG_FILE = path.join(import.meta.dirname, "..", "error.log");
+const PROJECT_ROOT = path.join(import.meta.dirname, "..");
+const ERROR_LOG_MAX_AGE_DAYS = Number(dotenvVars.ERROR_LOG_MAX_AGE_DAYS) || 14;
+const ERROR_LOG_MAX_SIZE_BYTES =
+  (Number(dotenvVars.ERROR_LOG_MAX_SIZE_MB) || 10) * 1024 * 1024;
+
+/**
+ * Rotate error.log if it exceeds max size.
+ */
+function rotateLogIfNeeded(): void {
+  if (rotateLogSync(LOG_FILE, ERROR_LOG_MAX_SIZE_BYTES)) {
+    const stats = fs.statSync(`${LOG_FILE}.1`);
+    process.stdout.write(
+      `  ${GREEN}✔${RESET} Log rotated (was ${formatBytes(stats.size)})\n`,
+    );
   }
 }
+
+/**
+ * Clean up log files older than retention period.
+ */
+function cleanOldLogs(): void {
+  cleanOldLogsSync(PROJECT_ROOT, ERROR_LOG_MAX_AGE_DAYS);
+}
+
+/**
+ * Cleanup error logs based on age and size thresholds from .env.
+ */
+function cleanupErrorLogs(): void {
+  cleanupErrorLogsSync(
+    PROJECT_ROOT,
+    ERROR_LOG_MAX_AGE_DAYS,
+    ERROR_LOG_MAX_SIZE_BYTES,
+  );
+}
+
+// Parse CLI args (for daemon commands: start, stop, restart, status, etc.)
+const args = process.argv.slice(2);
 
 // =============================================================================
 // UTILITY FUNCTIONS
@@ -215,6 +474,42 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Check if a TCP port is available by attempting to listen on it.
+ * Returns true if available, false if in use.
+ */
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port);
+  });
+}
+
+/**
+ * Wait for a port to become available, with retries.
+ * Returns true if available within timeout, false otherwise.
+ */
+async function waitForPort(
+  port: number,
+  maxRetries = 10,
+  intervalMs = 500,
+): Promise<boolean> {
+  for (let i = 0; i < maxRetries; i++) {
+    if (await isPortAvailable(port)) return true;
+    if (i < maxRetries - 1) {
+      process.stdout.write(
+        `  ${DIM}Waiting for port ${port} to be released... (${i + 1}/${maxRetries})${RESET}\n`,
+      );
+      await sleep(intervalMs);
+    }
+  }
+  return false;
+}
+
+/**
  * Clear screen and move cursor to top
  */
 function clearScreen(): void {
@@ -268,6 +563,8 @@ let prerenderedNameFrames: string[] = [];
  * Footer: Crush-style random character cycling with color gradient
  */
 function prerenderAnimationFrames(): void {
+  if (!GRAPHICS_ENABLED) return;
+
   const decorative = DECORATIVE_CHARS.split("");
   const headerWidth = 62;
   const footerWidth = 30; // Short footer
@@ -365,6 +662,7 @@ let menuLineCount = 0;
  * Start animation loop for header, name, and footer (30 FPS)
  */
 function startAnimation(): void {
+  if (!GRAPHICS_ENABLED) return;
   if (hieroglyphAnimationInterval) return;
 
   // Pre-render frames if not done yet
@@ -428,6 +726,8 @@ function stopAnimation(): void {
  * Print decorative footer with flowing orange gradient (initial render)
  */
 function printAnimatedFooter(): void {
+  if (!GRAPHICS_ENABLED) return;
+
   // Pre-render frames if not done
   if (prerenderedFrames.length === 0) {
     prerenderAnimationFrames();
@@ -441,6 +741,11 @@ function printAnimatedFooter(): void {
  * Print thin gradient header (Claude Code style) with orange gradient
  */
 function printBanner(): void {
+  if (!GRAPHICS_ENABLED) {
+    console.log(`${DISPLAY_NAME} (${SYSTEM_VERSION}) | ${DESCRIPTION}`);
+    return;
+  }
+
   clearScreen();
 
   // Pre-render frames for animation
@@ -475,38 +780,26 @@ function buildSystemInfo(stats: SystemStats): string {
 }
 
 /**
- * Build browser status string
- */
-function buildBrowserStatus(): string {
-  const enabledBrowsers = BROWSERS.filter((b) => b.enabled);
-  const browserNames = enabledBrowsers.map(
-    (b) => `${b.color}${b.name}${RESET}`,
-  );
-  return `${DIM}Browsers:${RESET} ${browserNames.join(", ")}`;
-}
-
-/**
  * Display the main menu
  */
 function displayMenu(): void {
   printBanner();
 
   const stats = getSystemStats();
-  process.stdout.write(`${buildSystemInfo(stats)}\n`);
-  process.stdout.write(`${buildBrowserStatus()}\n\n`);
+  process.stdout.write(`${buildSystemInfo(stats)}\n\n`);
 
   process.stdout.write(`${BOLD}Select Deployment Mode:${RESET}\n\n`);
   process.stdout.write(
     `  ${CYAN}[1]${RESET} ${BOLD}Development Server (Debug)${RESET}\n`,
   );
   process.stdout.write(
-    `      ${DIM}Hot reload, DEBUG=true, browsers, port ${SERVER_PORT}${RESET}\n\n`,
+    `      ${DIM}Hot reload, DEBUG=true, React Grab + Agent Server, port ${SERVER_PORT}${RESET}\n\n`,
   );
   process.stdout.write(
     `  ${YELLOW}[2]${RESET} ${BOLD}Development Server${RESET}\n`,
   );
   process.stdout.write(
-    `      ${DIM}Hot reload, standard logging, browsers, port ${SERVER_PORT}${RESET}\n\n`,
+    `      ${DIM}Hot reload, standard logging, port ${SERVER_PORT}${RESET}\n\n`,
   );
   process.stdout.write(
     `  ${GREEN}[3]${RESET} ${BOLD}Production Server${RESET}\n`,
@@ -520,128 +813,16 @@ function displayMenu(): void {
   process.stdout.write(
     `      ${DIM}Production build + tunnel to ${TUNNEL_PUBLIC_URL}${RESET}\n\n`,
   );
-  process.stdout.write(`  ${DIM}[B]${RESET} ${BOLD}Toggle Browsers${RESET}\n`);
-  process.stdout.write(
-    `      ${DIM}Enable/disable individual browsers${RESET}\n\n`,
-  );
   process.stdout.write(`  ${RED}[0]${RESET} ${BOLD}Exit${RESET}\n\n`);
 
   // Decorative footer with flowing orange gradient (animated)
   printAnimatedFooter();
 
-  // Track line count for animation cursor positioning (1-indexed)
-  // Lines: 1=top bar, 2=title, 3=bottom bar, 4=system info, 5=browsers, 6=empty
-  // 7=Select, 8=empty, 9=[1], 10=desc, 11=empty, 12=[2], 13=desc, 14=empty
-  // 15=[3], 16=desc, 17=empty, 18=[4], 19=desc, 20=empty, 21=[B], 22=desc, 23=empty, 24=[0], 25=empty, 26=footer
-  menuLineCount = 26;
+  // Track line count for animation cursor positioning
+  menuLineCount = 22;
 
   // Start animation loop after menu is displayed
   startAnimation();
-}
-
-/**
- * Display browser toggle menu
- */
-function displayBrowserMenu(): void {
-  clearScreen();
-  printBanner();
-
-  process.stdout.write(`${BOLD}Toggle Browsers:${RESET}\n\n`);
-
-  for (let i = 0; i < BROWSERS.length; i++) {
-    const browser = BROWSERS[i];
-    const status = browser.enabled
-      ? `${GREEN}[ON]${RESET}`
-      : `${RED}[OFF]${RESET}`;
-    process.stdout.write(
-      `  ${DIM}[${i + 1}]${RESET} ${browser.color}${browser.name}${RESET} ${status}\n`,
-    );
-  }
-
-  process.stdout.write(`\n  ${DIM}[A]${RESET} Enable All\n`);
-  process.stdout.write(`  ${DIM}[N]${RESET} Disable All\n`);
-  process.stdout.write(`  ${DIM}[0]${RESET} Back to Main Menu\n\n`);
-
-  process.stdout.write(`${CYAN}Enter your choice: ${RESET}`);
-}
-
-// =============================================================================
-// BROWSER MANAGEMENT
-// =============================================================================
-
-/**
- * Start enabled browsers
- */
-async function startBrowsers(): Promise<void> {
-  const enabledBrowsers = BROWSERS.filter((b) => b.enabled);
-
-  if (enabledBrowsers.length === 0) {
-    process.stdout.write(`  ${DIM}○${RESET} No browsers enabled\n`);
-    return;
-  }
-
-  process.stdout.write(`\n${BOLD}[BROWSERS] Starting browsers...${RESET}\n`);
-
-  for (const browser of enabledBrowsers) {
-    try {
-      // Skip system browser command check - just try to launch
-      if (browser.id !== "system") {
-        // Check if command exists
-        try {
-          execSync(`which ${browser.command}`, {
-            encoding: "utf-8",
-            stdio: "pipe",
-          });
-        } catch {
-          process.stdout.write(
-            `  ${YELLOW}⚠${RESET} ${browser.name} not found, skipping\n`,
-          );
-          continue;
-        }
-      }
-
-      const proc = spawn(browser.command, browser.args, {
-        stdio: "pipe",
-        detached: true,
-      });
-
-      browserProcesses.set(browser.id, proc);
-
-      proc.on("error", (err) => {
-        process.stdout.write(
-          `  ${RED}✖${RESET} ${browser.name} error: ${err.message}\n`,
-        );
-      });
-
-      process.stdout.write(
-        `  ${GREEN}✔${RESET} ${browser.color}${browser.name}${RESET} started\n`,
-      );
-
-      // Small delay between browser launches
-      await sleep(500);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      process.stdout.write(
-        `  ${YELLOW}⚠${RESET} ${browser.name}: ${errorMessage}\n`,
-      );
-    }
-  }
-}
-
-/**
- * Stop all browser processes
- */
-function stopBrowsers(): void {
-  for (const [_id, proc] of browserProcesses.entries()) {
-    try {
-      if (proc.pid) {
-        process.kill(-proc.pid, "SIGTERM");
-      }
-    } catch {
-      // Process may already be dead
-    }
-  }
-  browserProcesses.clear();
 }
 
 // =============================================================================
@@ -654,68 +835,134 @@ function stopBrowsers(): void {
 async function killBlockingProcesses(): Promise<void> {
   process.stdout.write(`\n${BOLD}[CLEANUP] Process Termination${RESET}\n`);
 
+  // Rotate logs if needed
+  rotateLogIfNeeded();
+  cleanOldLogs();
+
   const currentPid = process.pid;
+  const isWindows = os.platform() === "win32";
   let totalKilled = 0;
 
   process.stdout.write(`  ${DIM}Terminating blocking processes...${RESET}\n`);
 
-  try {
-    const processOutput = execSync(
-      "pgrep -f 'next dev|next start|pnpm dev|pnpm start' 2>/dev/null || true",
-      { encoding: "utf-8" },
-    );
-    const processPids = processOutput
-      .trim()
-      .split("\n")
-      .filter((pid) => pid && Number.parseInt(pid, 10) !== currentPid);
-
-    for (const pid of processPids) {
-      try {
-        execSync(`kill -9 ${pid} 2>/dev/null || true`);
-        totalKilled++;
-      } catch {
-        // Ignore errors
+  if (isWindows) {
+    // Windows: use tasklist + taskkill
+    try {
+      const processOutput = execSync(
+        'tasklist /FI "IMAGENAME eq node.exe" /FO CSV /NH 2>NUL',
+        { encoding: "utf-8" },
+      );
+      const lines = processOutput.trim().split("\n").filter(Boolean);
+      for (const line of lines) {
+        const match = line.match(/"node\.exe","(\d+)"/);
+        if (match) {
+          const pid = Number.parseInt(match[1], 10);
+          if (pid === currentPid) continue;
+          try {
+            // Check if this node process is running next/pnpm
+            const cmdLine = execSync(
+              `wmic process where "ProcessId=${pid}" get CommandLine /FORMAT:LIST 2>NUL`,
+              { encoding: "utf-8" },
+            );
+            if (/next|pnpm|turbopack/i.test(cmdLine)) {
+              execSync(`taskkill /F /PID ${pid} 2>NUL`);
+              totalKilled++;
+            }
+          } catch {
+            // Ignore individual process errors
+          }
+        }
       }
+    } catch {
+      // No processes found
     }
-  } catch {
-    // No processes found
-  }
 
-  process.stdout.write(`  ${DIM}Releasing port ${SERVER_PORT}...${RESET}\n`);
+    process.stdout.write(`  ${DIM}Releasing port ${SERVER_PORT}...${RESET}\n`);
 
-  try {
-    const portOutput = execSync(
-      `lsof -t -i:${SERVER_PORT} 2>/dev/null || true`,
-      {
-        encoding: "utf-8",
-      },
-    );
-    const portPids = portOutput
-      .trim()
-      .split("\n")
-      .filter((pid) => pid && Number.parseInt(pid, 10) !== currentPid);
-
-    for (const pid of portPids) {
-      try {
-        execSync(`kill -9 ${pid} 2>/dev/null || true`);
-        totalKilled++;
-      } catch {
-        // Ignore errors
+    try {
+      const netstatOutput = execSync(
+        `netstat -ano | findstr ":${SERVER_PORT}" | findstr "LISTENING"`,
+        { encoding: "utf-8" },
+      );
+      const portLines = netstatOutput.trim().split("\n").filter(Boolean);
+      for (const line of portLines) {
+        const parts = line.trim().split(/\s+/);
+        const pid = Number.parseInt(parts[parts.length - 1], 10);
+        if (pid && pid !== currentPid) {
+          try {
+            execSync(`taskkill /F /PID ${pid} 2>NUL`);
+            totalKilled++;
+          } catch {
+            // Ignore errors
+          }
+        }
       }
+    } catch {
+      // No processes on port
     }
-  } catch {
-    // No processes on port
+  } else {
+    // Unix/macOS: use pgrep, lsof, kill
+    try {
+      const processOutput = execSync(
+        "pgrep -f 'next dev|next start|pnpm dev|pnpm start' 2>/dev/null || true",
+        { encoding: "utf-8" },
+      );
+      const processPids = processOutput
+        .trim()
+        .split("\n")
+        .filter((pid) => pid && Number.parseInt(pid, 10) !== currentPid);
+
+      for (const pid of processPids) {
+        try {
+          execSync(`kill -9 ${pid} 2>/dev/null || true`);
+          totalKilled++;
+        } catch {
+          // Ignore errors
+        }
+      }
+    } catch {
+      // No processes found
+    }
+
+    process.stdout.write(`  ${DIM}Releasing port ${SERVER_PORT}...${RESET}\n`);
+
+    try {
+      const portOutput = execSync(
+        `lsof -t -i:${SERVER_PORT} 2>/dev/null || true`,
+        { encoding: "utf-8" },
+      );
+      const portPids = portOutput
+        .trim()
+        .split("\n")
+        .filter((pid) => pid && Number.parseInt(pid, 10) !== currentPid);
+
+      for (const pid of portPids) {
+        try {
+          execSync(`kill -9 ${pid} 2>/dev/null || true`);
+          totalKilled++;
+        } catch {
+          // Ignore errors
+        }
+      }
+    } catch {
+      // No processes on port
+    }
   }
 
   if (totalKilled > 0) {
     process.stdout.write(
       `  ${GREEN}✔${RESET} Cleanup completed (${totalKilled} processes)\n`,
     );
+    // Wait for port to actually be released (Windows is slow to free ports)
+    const portReady = await waitForPort(SERVER_PORT, 10, 500);
+    if (!portReady) {
+      process.stdout.write(
+        `  ${YELLOW}⚠${RESET} Port ${SERVER_PORT} still in use after cleanup\n`,
+      );
+    }
   } else {
     process.stdout.write(`  ${DIM}○${RESET} No conflicting processes found\n`);
   }
-
-  await sleep(200);
 }
 
 /**
@@ -742,6 +989,52 @@ function clearNextCache(): void {
   }
 }
 
+/**
+ * Resolve @react-grab/claude-code server.cjs from the npx cache.
+ * Ensures the package is cached first, then scans the npx cache directory.
+ */
+function resolveReactGrabServer(): string | null {
+  try {
+    // Ensure package is cached (npx --yes installs if missing)
+    execSync("npx --yes @react-grab/claude-code@latest --help", {
+      stdio: "ignore",
+      timeout: 30000,
+    });
+  } catch {
+    // Package may already be cached, continue
+  }
+
+  try {
+    const npmCache = execSync("npm config get cache", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+      timeout: 5000,
+    }).trim();
+    const npxCacheDir = path.join(npmCache, "_npx");
+
+    if (!fs.existsSync(npxCacheDir)) return null;
+
+    for (const entry of fs.readdirSync(npxCacheDir)) {
+      const serverPath = path.join(
+        npxCacheDir,
+        entry,
+        "node_modules",
+        "@react-grab",
+        "claude-code",
+        "dist",
+        "server.cjs",
+      );
+      if (fs.existsSync(serverPath)) {
+        return serverPath;
+      }
+    }
+  } catch {
+    // Cache scan failed
+  }
+
+  return null;
+}
+
 // =============================================================================
 // SERVER LAUNCHERS
 // =============================================================================
@@ -750,6 +1043,9 @@ function clearNextCache(): void {
  * Start development server
  */
 async function startDevServer(): Promise<void> {
+  if (isServerLaunching) return;
+  isServerLaunching = true;
+
   printBanner();
   process.stdout.write(`${YELLOW}${BOLD}▶ DEVELOPMENT MODE${RESET}\n`);
 
@@ -758,25 +1054,25 @@ async function startDevServer(): Promise<void> {
 
   process.stdout.write(`\n${BOLD}[START] Development Server${RESET}\n`);
   process.stdout.write(
-    `  ${DIM}Hot reload enabled, port ${SERVER_PORT}${RESET}\n`,
+    `  ${DIM}Hot reload enabled, port ${SERVER_PORT}${RESET}\n\n`,
   );
 
-  await startBrowsers();
-
   process.stdout.write(
-    `\n${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
+    `${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
   );
 
   childProcess = spawn("pnpm", ["dev"], {
     stdio: "inherit",
+    shell: true,
     env: {
       ...process.env,
       NODE_OPTIONS: "--no-deprecation --disable-warning=SourceMapWarning",
+      PORT: String(SERVER_PORT),
     },
   });
 
   childProcess.on("close", (code) => {
-    stopBrowsers();
+    isServerLaunching = false;
     process.stdout.write(
       `\n${YELLOW}Dev server exited with code ${code}${RESET}\n`,
     );
@@ -784,7 +1080,7 @@ async function startDevServer(): Promise<void> {
   });
 
   childProcess.on("error", (err) => {
-    stopBrowsers();
+    isServerLaunching = false;
     process.stdout.write(
       `\n${RED}Error starting dev server: ${err.message}${RESET}\n`,
     );
@@ -796,6 +1092,9 @@ async function startDevServer(): Promise<void> {
  * Start development server with debug logging
  */
 async function startDevServerDebug(): Promise<void> {
+  if (isServerLaunching) return;
+  isServerLaunching = true;
+
   printBanner();
   process.stdout.write(`${CYAN}${BOLD}▶ DEVELOPMENT MODE (DEBUG)${RESET}\n`);
 
@@ -804,10 +1103,73 @@ async function startDevServerDebug(): Promise<void> {
 
   process.stdout.write(`\n${BOLD}[START] Development Server (Debug)${RESET}\n`);
   process.stdout.write(
-    `  ${DIM}Hot reload enabled, DEBUG=true, port ${SERVER_PORT}${RESET}\n`,
+    `  ${DIM}Hot reload enabled, DEBUG=true, port ${SERVER_PORT}${RESET}\n\n`,
   );
 
-  await startBrowsers();
+  // Start React Grab agent provider server in background
+  process.stdout.write(`\n${BOLD}[REACT GRAB] Agent Provider${RESET}\n`);
+  process.stdout.write(
+    `  ${DIM}Starting @react-grab/claude-code agent server...${RESET}\n`,
+  );
+
+  // Use forward slashes — NODE_OPTIONS parses backslashes as escape chars
+  const windowsHidePatch = path
+    .resolve(import.meta.dirname, "reactgrab-patch.cjs")
+    .replaceAll("\\", "/");
+
+  // Resolve server.cjs from npx cache — npx strips --require from
+  // NODE_OPTIONS, so we bypass npx and run server.cjs directly
+  const reactGrabServerPath = resolveReactGrabServer();
+
+  if (reactGrabServerPath) {
+    // Run server.cjs directly with --require for windowsHide patch
+    agentServerProcess = spawn(
+      process.execPath,
+      [
+        "--require",
+        windowsHidePatch,
+        "--no-deprecation",
+        "--disable-warning=SourceMapWarning",
+        reactGrabServerPath,
+      ],
+      {
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          REACT_GRAB_CWD: path.resolve(import.meta.dirname, ".."),
+        },
+        windowsHide: true,
+      },
+    );
+  } else {
+    // Fallback: use npx (patch won't fully propagate but server still works)
+    process.stdout.write(
+      `  ${YELLOW}⚠${RESET} Using npx fallback (windowsHide patch may not apply)\n`,
+    );
+    agentServerProcess = spawn("npx", ["@react-grab/claude-code@latest"], {
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require "${windowsHidePatch}" --no-deprecation --disable-warning=SourceMapWarning`,
+        REACT_GRAB_CWD: path.resolve(import.meta.dirname, ".."),
+      },
+      shell: true,
+      windowsHide: true,
+    });
+  }
+
+  agentServerProcess.on("error", (err) => {
+    process.stdout.write(
+      `  ${YELLOW}⚠${RESET} React Grab agent server failed: ${err.message}\n`,
+    );
+    process.stdout.write(
+      `  ${DIM}Copy mode still works. Prompt mode requires the agent server.${RESET}\n`,
+    );
+  });
+
+  process.stdout.write(
+    `  ${GREEN}✔${RESET} Agent server started (background)\n`,
+  );
 
   process.stdout.write(
     `\n${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
@@ -815,15 +1177,26 @@ async function startDevServerDebug(): Promise<void> {
 
   childProcess = spawn("pnpm", ["dev"], {
     stdio: "inherit",
+    shell: true,
     env: {
       ...process.env,
       NODE_OPTIONS: "--no-deprecation --disable-warning=SourceMapWarning",
       DEBUG: "true",
+      PORT: String(SERVER_PORT),
     },
   });
 
   childProcess.on("close", (code) => {
-    stopBrowsers();
+    isServerLaunching = false;
+    // Kill agent server when dev server exits
+    if (agentServerProcess) {
+      try {
+        agentServerProcess.kill("SIGTERM");
+      } catch {
+        // Process may already be dead
+      }
+      agentServerProcess = null;
+    }
     process.stdout.write(
       `\n${YELLOW}Dev server (debug) exited with code ${code}${RESET}\n`,
     );
@@ -831,7 +1204,16 @@ async function startDevServerDebug(): Promise<void> {
   });
 
   childProcess.on("error", (err) => {
-    stopBrowsers();
+    isServerLaunching = false;
+    // Kill agent server on error
+    if (agentServerProcess) {
+      try {
+        agentServerProcess.kill("SIGTERM");
+      } catch {
+        // Process may already be dead
+      }
+      agentServerProcess = null;
+    }
     process.stdout.write(
       `\n${RED}Error starting dev server (debug): ${err.message}${RESET}\n`,
     );
@@ -843,6 +1225,9 @@ async function startDevServerDebug(): Promise<void> {
  * Start production server with build
  */
 async function startLiveServer(): Promise<void> {
+  if (isServerLaunching) return;
+  isServerLaunching = true;
+
   printBanner();
   process.stdout.write(`${GREEN}${BOLD}▶ PRODUCTION MODE${RESET}\n`);
 
@@ -857,6 +1242,7 @@ async function startLiveServer(): Promise<void> {
   try {
     const buildProcess = spawn("pnpm", ["build"], {
       stdio: "inherit",
+      shell: true,
       env: {
         ...process.env,
         NODE_OPTIONS: "--no-deprecation --disable-warning=SourceMapWarning",
@@ -883,6 +1269,7 @@ async function startLiveServer(): Promise<void> {
     const errorMessage = err instanceof Error ? err.message : String(err);
     process.stdout.write(`\n  ${RED}✖${RESET} Build failed: ${errorMessage}\n`);
     process.stdout.write(`\n${YELLOW}Returning to menu...${RESET}\n`);
+    isServerLaunching = false;
     await sleep(2000);
     returnToMenu();
     return;
@@ -897,15 +1284,21 @@ async function startLiveServer(): Promise<void> {
     `${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
   );
 
+  // Production: errors-only logging (stdout suppressed, stderr to error.log)
+  const logStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
   childProcess = spawn("pnpm", ["start"], {
-    stdio: "inherit",
+    stdio: ["ignore", "ignore", logStream],
+    shell: true,
     env: {
       ...process.env,
       NODE_OPTIONS: "--no-deprecation --disable-warning=SourceMapWarning",
     },
   });
 
+  process.stdout.write(`  ${DIM}Errors logging to: error.log${RESET}\n`);
+
   childProcess.on("close", (code) => {
+    isServerLaunching = false;
     process.stdout.write(
       `\n${YELLOW}Production server exited with code ${code}${RESET}\n`,
     );
@@ -913,6 +1306,7 @@ async function startLiveServer(): Promise<void> {
   });
 
   childProcess.on("error", (err) => {
+    isServerLaunching = false;
     process.stdout.write(
       `\n${RED}Error starting production server: ${err.message}${RESET}\n`,
     );
@@ -926,6 +1320,9 @@ async function startLiveServer(): Promise<void> {
  * Edit SERVER_PORT in this file to change the port for multiple apps
  */
 async function startTunnel(): Promise<void> {
+  if (isServerLaunching) return;
+  isServerLaunching = true;
+
   printBanner();
   process.stdout.write(
     `${MAGENTA}${BOLD}▶ CLOUDFLARE TUNNEL (PRODUCTION)${RESET}\n\n`,
@@ -964,6 +1361,7 @@ async function startTunnel(): Promise<void> {
   try {
     const buildProcess = spawn("pnpm", ["build"], {
       stdio: "inherit",
+      shell: true,
       env: {
         ...process.env,
         NODE_OPTIONS: "--no-deprecation --disable-warning=SourceMapWarning",
@@ -990,6 +1388,7 @@ async function startTunnel(): Promise<void> {
     const errorMessage = err instanceof Error ? err.message : String(err);
     process.stdout.write(`\n  ${RED}✖${RESET} Build failed: ${errorMessage}\n`);
     process.stdout.write(`\n${YELLOW}Returning to menu...${RESET}\n`);
+    isServerLaunching = false;
     await sleep(2000);
     returnToMenu();
     return;
@@ -1001,9 +1400,11 @@ async function startTunnel(): Promise<void> {
     `  ${DIM}Starting production server on port ${SERVER_PORT}...${RESET}\n`,
   );
 
+  const tunnelLogStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
   const serverProcess = spawn("pnpm", ["start"], {
-    stdio: "pipe",
+    stdio: ["ignore", "ignore", tunnelLogStream],
     detached: true,
+    shell: true,
     env: {
       ...process.env,
       NODE_OPTIONS: "--no-deprecation --disable-warning=SourceMapWarning",
@@ -1033,6 +1434,7 @@ async function startTunnel(): Promise<void> {
   );
 
   childProcess.on("close", (code) => {
+    isServerLaunching = false;
     // Kill the server process when tunnel closes
     if (serverProcess.pid) {
       try {
@@ -1048,6 +1450,7 @@ async function startTunnel(): Promise<void> {
   });
 
   childProcess.on("error", (err) => {
+    isServerLaunching = false;
     // Kill the server process on error
     if (serverProcess.pid) {
       try {
@@ -1064,15 +1467,172 @@ async function startTunnel(): Promise<void> {
 }
 
 // =============================================================================
-// MENU HANDLING
+// DAEMON MODE COMMANDS
 // =============================================================================
 
-let inBrowserMenu = false;
+/**
+ * Start server in background (daemon mode)
+ */
+async function daemonStart(): Promise<void> {
+  // Check if already running
+  if (fs.existsSync(PID_FILE)) {
+    const existingPid = fs.readFileSync(PID_FILE, "utf-8").trim();
+    process.stdout.write(
+      `Server may already be running (PID: ${existingPid}). Use 'status' to check.\n`,
+    );
+    return;
+  }
+
+  // Start in background (--experimental-transform-types for Node native TS)
+  const child = spawn(
+    "node",
+    ["--experimental-transform-types", process.argv[1], "foreground"],
+    {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, PORT: String(SERVER_PORT) },
+    },
+  );
+
+  if (child.pid) {
+    fs.writeFileSync(PID_FILE, String(child.pid));
+    child.unref();
+    process.stdout.write(`Server started in background (PID: ${child.pid})\n`);
+  }
+}
+
+/**
+ * Stop background server
+ */
+async function daemonStop(): Promise<void> {
+  if (!fs.existsSync(PID_FILE)) {
+    process.stdout.write("No PID file found. Server may not be running.\n");
+    return;
+  }
+
+  const pid = Number(fs.readFileSync(PID_FILE, "utf-8").trim());
+  try {
+    process.kill(pid, "SIGTERM");
+    fs.unlinkSync(PID_FILE);
+    process.stdout.write(`Server stopped (PID: ${pid})\n`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    process.stdout.write(`Failed to stop server: ${errorMessage}\n`);
+    fs.unlinkSync(PID_FILE);
+  }
+}
+
+/**
+ * Restart background server
+ */
+async function daemonRestart(): Promise<void> {
+  await daemonStop();
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await daemonStart();
+}
+
+/**
+ * Check server status
+ */
+async function daemonStatus(): Promise<void> {
+  if (!fs.existsSync(PID_FILE)) {
+    process.stdout.write("Server is not running (no PID file)\n");
+    return;
+  }
+
+  const pid = Number(fs.readFileSync(PID_FILE, "utf-8").trim());
+  try {
+    process.kill(pid, 0); // Check if process exists
+    process.stdout.write(`Server is running (PID: ${pid})\n`);
+  } catch {
+    process.stdout.write(`Server is not running (stale PID: ${pid})\n`);
+    fs.unlinkSync(PID_FILE);
+  }
+}
+
+/**
+ * Tail error logs
+ */
+async function daemonLogs(): Promise<void> {
+  const logPath = path.join(import.meta.dirname, "..", "error.log");
+  if (!fs.existsSync(logPath)) {
+    process.stdout.write("No error.log found\n");
+    return;
+  }
+
+  const child = spawn("tail", ["-f", logPath], { stdio: "inherit" });
+  process.on("SIGINT", () => child.kill());
+}
+
+/**
+ * Run server in foreground (used by daemonStart)
+ */
+async function daemonForeground(): Promise<void> {
+  await startServer("production");
+}
+
+/**
+ * Start production server (helper for foreground mode)
+ */
+async function startServer(_mode: "production"): Promise<void> {
+  printBanner();
+  process.stdout.write(
+    `${GREEN}${BOLD}▶ PRODUCTION MODE (FOREGROUND)${RESET}\n`,
+  );
+
+  await killBlockingProcesses();
+
+  process.stdout.write(`\n${BOLD}[START] Production Server${RESET}\n`);
+  process.stdout.write(
+    `  ${DIM}Starting production server, port ${SERVER_PORT}${RESET}\n\n`,
+  );
+
+  process.stdout.write(
+    `${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
+  );
+
+  childProcess = spawn("pnpm", ["start"], {
+    stdio: "inherit",
+    shell: true,
+    env: {
+      ...process.env,
+      NODE_OPTIONS: "--no-deprecation --disable-warning=SourceMapWarning",
+      PORT: String(SERVER_PORT),
+    },
+  });
+
+  // Start background cleanup (every 6 hours)
+  startBackgroundCleanup();
+
+  childProcess.on("close", (code) => {
+    stopBackgroundCleanup();
+    process.stdout.write(
+      `\n${YELLOW}Server exited with code ${code}${RESET}\n`,
+    );
+    process.exit(code || 0);
+  });
+
+  childProcess.on("error", (err) => {
+    stopBackgroundCleanup();
+    process.stdout.write(
+      `\n${RED}Error starting server: ${err.message}${RESET}\n`,
+    );
+    process.exit(1);
+  });
+}
+
+// =============================================================================
+// MENU HANDLING
+// =============================================================================
 
 /**
  * Return to main menu
  */
 async function returnToMenu(): Promise<void> {
+  if (isReturningToMenu) return;
+  isReturningToMenu = true;
+  isServerLaunching = false;
+
   childProcess = null;
   await sleep(500);
 
@@ -1081,6 +1641,7 @@ async function returnToMenu(): Promise<void> {
   );
 
   await waitForKeypress();
+  isReturningToMenu = false;
   main();
 }
 
@@ -1104,63 +1665,10 @@ function waitForKeypress(): Promise<void> {
 }
 
 /**
- * Handle browser menu keypress
- */
-function handleBrowserMenuKeypress(key: Buffer): void {
-  const keyStr = key.toString();
-
-  // Ctrl+C or Escape - back to main menu
-  if (key[0] === 3 || key[0] === 27) {
-    inBrowserMenu = false;
-    main();
-    return;
-  }
-
-  // Number keys 1-4 toggle browsers
-  const num = Number.parseInt(keyStr, 10);
-  if (num >= 1 && num <= BROWSERS.length) {
-    BROWSERS[num - 1].enabled = !BROWSERS[num - 1].enabled;
-    displayBrowserMenu();
-    return;
-  }
-
-  // A - enable all
-  if (keyStr.toLowerCase() === "a") {
-    for (const browser of BROWSERS) {
-      browser.enabled = true;
-    }
-    displayBrowserMenu();
-    return;
-  }
-
-  // N - disable all
-  if (keyStr.toLowerCase() === "n") {
-    for (const browser of BROWSERS) {
-      browser.enabled = false;
-    }
-    displayBrowserMenu();
-    return;
-  }
-
-  // 0 - back to main menu
-  if (keyStr === "0") {
-    inBrowserMenu = false;
-    main();
-    return;
-  }
-}
-
-/**
  * Handle menu keypress
  */
 function handleMenuKeypress(key: Buffer): void {
   const keyStr = key.toString();
-
-  // Handle browser menu separately
-  if (inBrowserMenu) {
-    handleBrowserMenuKeypress(key);
-    return;
-  }
 
   if (key[0] === 3) {
     stopAnimation();
@@ -1201,13 +1709,6 @@ function handleMenuKeypress(key: Buffer): void {
       stopListeningForMenuInput();
       startTunnel();
       break;
-    case "b":
-    case "B":
-      isInMenu = false;
-      stopAnimation();
-      inBrowserMenu = true;
-      displayBrowserMenu();
-      break;
     case "0":
     case "q":
     case "Q":
@@ -1217,7 +1718,7 @@ function handleMenuKeypress(key: Buffer): void {
       break;
     default:
       process.stdout.write(
-        `\r${RED}Invalid option '${keyStr.replace(/[^\x20-\x7E]/g, "")}'. Press 1, 2, 3, 4, B, or 0.${RESET}                    \r`,
+        `\r${RED}Invalid option '${keyStr.replace(/[^\x20-\x7E]/g, "")}'. Press 1, 2, 3, 4, or 0.${RESET}                    \r`,
       );
       process.stdout.write(`${CYAN}Enter your choice: ${RESET}`);
   }
@@ -1259,7 +1760,7 @@ function stopListeningForMenuInput(): void {
  * Menu data handler
  */
 function onMenuData(key: Buffer | string): void {
-  if (!isInMenu && !inBrowserMenu) return;
+  if (!isInMenu) return;
 
   const keyBuffer = Buffer.isBuffer(key) ? key : Buffer.from(key);
   handleMenuKeypress(keyBuffer);
@@ -1271,11 +1772,16 @@ function onMenuData(key: Buffer | string): void {
 function cleanupAndExit(code: number): void {
   stopAnimation();
   stopListeningForMenuInput();
-  stopBrowsers();
+  stopBackgroundCleanup();
 
   if (childProcess) {
     childProcess.kill("SIGTERM");
     childProcess = null;
+  }
+
+  if (agentServerProcess) {
+    agentServerProcess.kill("SIGTERM");
+    agentServerProcess = null;
   }
 
   if (process.stdin.isTTY) {
@@ -1306,9 +1812,260 @@ function setupSignalHandlers(): void {
 // =============================================================================
 
 /**
- * Main function - displays menu and waits for input
+ * Reinstall - Delete node_modules, pnpm-lock.yaml, .next/ and reinstall
  */
-function main(): void {
+async function reinstall(): Promise<void> {
+  const projectRoot = process.cwd();
+  const nodeModulesPath = path.join(projectRoot, "node_modules");
+  const lockFilePath = path.join(projectRoot, "pnpm-lock.yaml");
+  const nextCachePath = path.join(projectRoot, ".next");
+
+  process.stdout.write(
+    `\n${YELLOW}${BOLD}🔍 Checking for files to delete...${RESET}\n\n`,
+  );
+
+  // Check what exists
+  const nodeModulesExists = fs.existsSync(nodeModulesPath);
+  const lockFileExists = fs.existsSync(lockFilePath);
+  const nextCacheExists = fs.existsSync(nextCachePath);
+
+  if (!nodeModulesExists && !lockFileExists && !nextCacheExists) {
+    process.stdout.write(`${GREEN}✅ node_modules: GONE${RESET}\n`);
+    process.stdout.write(`${GREEN}✅ pnpm-lock.yaml: GONE${RESET}\n`);
+    process.stdout.write(`${GREEN}✅ .next/: GONE${RESET}\n`);
+    process.stdout.write(`\n${CYAN}📦 Starting fresh install...${RESET}\n\n`);
+  } else {
+    // Report what exists
+    if (nodeModulesExists) {
+      process.stdout.write(
+        `${YELLOW}📁 node_modules: EXISTS - will be deleted${RESET}\n`,
+      );
+    } else {
+      process.stdout.write(`${GREEN}✅ node_modules: GONE${RESET}\n`);
+    }
+
+    if (lockFileExists) {
+      process.stdout.write(
+        `${YELLOW}📄 pnpm-lock.yaml: EXISTS - will be deleted${RESET}\n`,
+      );
+    } else {
+      process.stdout.write(`${GREEN}✅ pnpm-lock.yaml: GONE${RESET}\n`);
+    }
+
+    if (nextCacheExists) {
+      process.stdout.write(
+        `${YELLOW}📁 .next/: EXISTS - will be deleted${RESET}\n`,
+      );
+    } else {
+      process.stdout.write(`${GREEN}✅ .next/: GONE${RESET}\n`);
+    }
+
+    process.stdout.write(`\n${RED}🗑️  Deleting...${RESET}\n\n`);
+
+    // Delete node_modules
+    if (nodeModulesExists) {
+      try {
+        fs.rmSync(nodeModulesPath, { recursive: true, force: true });
+        process.stdout.write(`${GREEN}✅ node_modules: DELETED${RESET}\n`);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        process.stdout.write(
+          `${RED}❌ Failed to delete node_modules: ${errorMessage}${RESET}\n`,
+        );
+        process.exit(1);
+      }
+    }
+
+    // Delete pnpm-lock.yaml
+    if (lockFileExists) {
+      try {
+        fs.rmSync(lockFilePath, { force: true });
+        process.stdout.write(`${GREEN}✅ pnpm-lock.yaml: DELETED${RESET}\n`);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        process.stdout.write(
+          `${RED}❌ Failed to delete pnpm-lock.yaml: ${errorMessage}${RESET}\n`,
+        );
+        process.exit(1);
+      }
+    }
+
+    // Delete .next/
+    if (nextCacheExists) {
+      try {
+        fs.rmSync(nextCachePath, { recursive: true, force: true });
+        process.stdout.write(`${GREEN}✅ .next/: DELETED${RESET}\n`);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        process.stdout.write(
+          `${RED}❌ Failed to delete .next/: ${errorMessage}${RESET}\n`,
+        );
+        process.exit(1);
+      }
+    }
+
+    // Verify deletion
+    process.stdout.write(`\n${YELLOW}🔍 Verifying deletion...${RESET}\n\n`);
+
+    const nodeModulesStillExists = fs.existsSync(nodeModulesPath);
+    const lockFileStillExists = fs.existsSync(lockFilePath);
+    const nextCacheStillExists = fs.existsSync(nextCachePath);
+
+    if (nodeModulesStillExists || lockFileStillExists || nextCacheStillExists) {
+      if (nodeModulesStillExists) {
+        process.stdout.write(`${RED}❌ node_modules still exists!${RESET}\n`);
+      }
+      if (lockFileStillExists) {
+        process.stdout.write(`${RED}❌ pnpm-lock.yaml still exists!${RESET}\n`);
+      }
+      if (nextCacheStillExists) {
+        process.stdout.write(`${RED}❌ .next/ still exists!${RESET}\n`);
+      }
+      process.stdout.write(
+        `\n${RED}⚠️  Deletion failed. Please delete manually and try again.${RESET}\n`,
+      );
+      process.exit(1);
+    }
+
+    process.stdout.write(`${GREEN}✅ node_modules: CONFIRMED GONE${RESET}\n`);
+    process.stdout.write(`${GREEN}✅ pnpm-lock.yaml: CONFIRMED GONE${RESET}\n`);
+    process.stdout.write(`${GREEN}✅ .next/: CONFIRMED GONE${RESET}\n`);
+    process.stdout.write(`\n${CYAN}📦 Starting fresh install...${RESET}\n\n`);
+  }
+
+  // Run pnpm install
+  try {
+    execSync("pnpm install", { stdio: "inherit" });
+    process.stdout.write(`\n${GREEN}✅ Installation complete!${RESET}\n`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    process.stdout.write(
+      `\n${RED}❌ Installation failed: ${errorMessage}${RESET}\n`,
+    );
+    process.exit(1);
+  }
+}
+
+/**
+ * Post-build: Copy required files to Next.js standalone build directory
+ */
+function postbuild(): void {
+  const standaloneDir = path.join(PROJECT_ROOT, ".next", "standalone");
+
+  if (!fs.existsSync(standaloneDir)) {
+    process.stdout.write(
+      `${YELLOW}⚠${RESET} No standalone build found. Run ${CYAN}next build${RESET} first.\n`,
+    );
+    process.exit(0);
+  }
+
+  process.stdout.write(`${BOLD}Copying files to standalone build...${RESET}\n`);
+
+  // Individual files to copy
+  const filesToCopy: string[] = [
+    "scripts/launch.ts",
+    "scripts/reactgrab-patch.cjs",
+    "lib/console.ts",
+    ".env",
+  ];
+
+  // Directories to copy (all .ts files)
+  const dirsToCopy: string[] = ["lib/gswarm", "lib/gswarm/storage"];
+
+  // Copy individual files
+  for (const src of filesToCopy) {
+    const srcPath = path.join(PROJECT_ROOT, src);
+    const destPath = path.join(standaloneDir, src);
+
+    if (!fs.existsSync(srcPath)) {
+      process.stdout.write(`${YELLOW}⚠${RESET} Skipped ${src} (not found)\n`);
+      continue;
+    }
+
+    const destDir = path.dirname(destPath);
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+
+    fs.copyFileSync(srcPath, destPath);
+    process.stdout.write(`${GREEN}✓${RESET} ${src}\n`);
+  }
+
+  // Copy .ts files from directories
+  for (const dir of dirsToCopy) {
+    const srcDir = path.join(PROJECT_ROOT, dir);
+    const destDir = path.join(standaloneDir, dir);
+
+    if (!fs.existsSync(srcDir)) {
+      process.stdout.write(`${YELLOW}⚠${RESET} Skipped ${dir}/ (not found)\n`);
+      continue;
+    }
+
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+
+    const files = fs
+      .readdirSync(srcDir)
+      .filter((f: string) => f.endsWith(".ts"));
+    for (const file of files) {
+      fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
+    }
+    process.stdout.write(
+      `${GREEN}✓${RESET} ${dir}/*.ts (${files.length} files)\n`,
+    );
+  }
+
+  process.stdout.write(`${GREEN}✓${RESET} Post-build complete\n`);
+}
+
+/**
+ * Main function - displays menu and waits for input, or handles daemon commands
+ */
+async function main(): Promise<void> {
+  const command = args[0]?.toLowerCase();
+
+  // Handle daemon commands
+  if (command) {
+    switch (command) {
+      case "start":
+        await daemonStart();
+        return;
+      case "stop":
+        await daemonStop();
+        return;
+      case "restart":
+        await daemonRestart();
+        return;
+      case "status":
+        await daemonStatus();
+        return;
+      case "logs":
+        await daemonLogs();
+        return;
+      case "foreground":
+      case "fg":
+        await daemonForeground();
+        return;
+      case "reinstall":
+        await reinstall();
+        return;
+      case "postbuild":
+        postbuild();
+        return;
+    }
+  }
+
+  // Non-interactive mode (cPanel, systemd, etc.) - auto-start server
+  if (STANDALONE_MODE) {
+    await daemonForeground();
+    return;
+  }
+
+  // Interactive menu (TTY)
   stopAnimation();
   stopListeningForMenuInput();
   displayMenu();
@@ -1319,6 +2076,7 @@ function main(): void {
   startListeningForMenuInput();
 }
 
-// Setup handlers and start
+// Setup handlers, cleanup, and start
 setupSignalHandlers();
+cleanupErrorLogs();
 main();

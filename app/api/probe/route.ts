@@ -1,5 +1,6 @@
 /**
  * @file app/api/probe/route.ts
+ * @version 1.0
  * @description Admin API route for probing all projects for health.
  * Checks health of all projects and disables failed ones.
  *
@@ -8,6 +9,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import {
   getDataPath,
   listFiles,
@@ -39,11 +41,25 @@ interface ProbeResult {
   error?: string;
 }
 
+/** GCP project ID format: 6-30 chars, lowercase alphanumeric + hyphens */
+const GCP_PROJECT_ID_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+
 /**
  * Probes a project for health
  */
 async function probeProject(project: Project): Promise<ProbeResult> {
   try {
+    // SSRF mitigation: validate projectId matches GCP format before URL construction
+    if (!GCP_PROJECT_ID_PATTERN.test(project.projectId)) {
+      return {
+        projectId: project.projectId,
+        name: project.name,
+        healthy: false,
+        disabled: false,
+        error: `Invalid project ID format: ${project.projectId.slice(0, 30)}`,
+      };
+    }
+
     // Health check endpoint for the project
     const testUrl = `https://${project.projectId}-aiplatform.googleapis.com/v1/projects/${project.projectId}/locations/us-central1/publishers/google/models`;
 
@@ -125,7 +141,7 @@ async function probeProject(project: Project): Promise<ProbeResult> {
  */
 export async function POST(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -195,6 +211,10 @@ export async function POST(request: NextRequest) {
       disabledCount,
     });
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] POST /api/probe failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
         error: "Probe failed",

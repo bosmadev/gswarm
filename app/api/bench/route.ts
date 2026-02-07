@@ -1,5 +1,6 @@
 /**
  * @file app/api/bench/route.ts
+ * @version 1.0
  * @description Admin API route for benchmarking all enabled projects.
  * Runs a simple test on each enabled project and measures latency.
  *
@@ -8,6 +9,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import {
   getDataPath,
   listFiles,
@@ -38,6 +40,9 @@ interface BenchmarkResult {
   error?: string;
 }
 
+/** GCP project ID format: 6-30 chars, lowercase alphanumeric + hyphens */
+const GCP_PROJECT_ID_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+
 /**
  * Runs a simple connectivity test on a project
  */
@@ -45,6 +50,17 @@ async function benchmarkProject(project: Project): Promise<BenchmarkResult> {
   const startTime = performance.now();
 
   try {
+    // SSRF mitigation: validate projectId matches GCP format before URL construction
+    if (!GCP_PROJECT_ID_PATTERN.test(project.projectId)) {
+      return {
+        projectId: project.projectId,
+        name: project.name,
+        success: false,
+        latencyMs: 0,
+        error: `Invalid project ID format: ${project.projectId.slice(0, 30)}`,
+      };
+    }
+
     // Test endpoint for the project
     const testUrl = `https://${project.projectId}-aiplatform.googleapis.com/v1/projects/${project.projectId}/locations/us-central1/publishers/google/models`;
 
@@ -129,7 +145,7 @@ async function benchmarkProject(project: Project): Promise<BenchmarkResult> {
  */
 export async function POST(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -170,6 +186,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ results });
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] POST /api/bench failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
         error: "Benchmark failed",

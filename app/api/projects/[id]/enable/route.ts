@@ -1,35 +1,16 @@
 /**
  * @file app/api/projects/[id]/enable/route.ts
- * @description Admin API route for toggling project API enabled status.
- * This is informational only - actual enabling is done in GCP console.
- * Updates local tracking of project status.
+ * @version 2.0
+ * @description Admin API route for checking project API enabled status.
+ * Projects are now discovered live via GCP - actual enabling is done in GCP console.
  *
  * @route POST /api/projects/[id]/enable
  */
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
-import {
-  getDataPath,
-  listFiles,
-  readJsonFile,
-  writeJsonFile,
-} from "@/lib/gswarm/storage/base";
-
-/** Project structure */
-interface Project {
-  projectId: string;
-  name: string;
-  enabled: boolean;
-  createdAt?: string;
-  lastUsed?: string;
-}
-
-/** Projects storage structure */
-interface ProjectsStorage {
-  projects: Project[];
-  updatedAt: string;
-}
+import { PREFIX, consoleError } from "@/lib/console";
+import { getAllGcpProjects } from "@/lib/gswarm/projects";
 
 /** Route params */
 interface RouteParams {
@@ -38,11 +19,12 @@ interface RouteParams {
 
 /**
  * POST /api/projects/[id]/enable
- * Toggle project API enabled status (local tracking only)
+ * Returns the current API enabled status for a GCP project.
+ * API status is managed via Google Cloud Console, not toggled here.
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -60,57 +42,26 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
 
   try {
-    const projectsDir = getDataPath("projects");
-    const filesResult = await listFiles(projectsDir, ".json");
+    const projects = await getAllGcpProjects();
+    const project = projects.find((p) => p.project_id === projectId);
 
-    if (!filesResult.success) {
-      return NextResponse.json(
-        { error: "Failed to access projects storage" },
-        { status: 500 },
-      );
+    if (!project) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
-    // Search for the project in all account files
-    for (const file of filesResult.data) {
-      const filePath = `${projectsDir}/${file}`;
-      const projectsResult = await readJsonFile<ProjectsStorage>(filePath);
-
-      if (!projectsResult.success || !projectsResult.data) {
-        continue;
-      }
-
-      const storage = projectsResult.data;
-      const projectIndex = storage.projects.findIndex(
-        (p) => p.projectId === projectId,
-      );
-
-      if (projectIndex !== -1) {
-        // Toggle the enabled status
-        storage.projects[projectIndex].enabled =
-          !storage.projects[projectIndex].enabled;
-        storage.updatedAt = new Date().toISOString();
-
-        const writeResult = await writeJsonFile(filePath, storage);
-
-        if (!writeResult.success) {
-          return NextResponse.json(
-            { error: "Failed to update project status" },
-            { status: 500 },
-          );
-        }
-
-        return NextResponse.json({
-          success: true,
-          enabled: storage.projects[projectIndex].enabled,
-        });
-      }
-    }
-
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    return NextResponse.json({
+      projectId: project.project_id,
+      enabled: project.api_enabled,
+      message: "API status is managed via Google Cloud Console",
+    });
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] POST /api/projects/[id]/enable failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
-        error: "Failed to toggle project status",
+        error: "Failed to check project status",
         message: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

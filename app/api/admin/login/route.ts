@@ -1,9 +1,12 @@
 /**
  * @file app/api/admin/login/route.ts
+ * @version 1.0
  * @description Admin login API route.
  * POST /api/admin/login - Authenticates admin users and creates sessions.
  *
  * @module app/api/admin/login
+ *
+ * Rate limited to 10 attempts per IP per minute to prevent brute-force attacks.
  */
 
 import type { NextRequest } from "next/server";
@@ -13,8 +16,11 @@ import {
   createSession,
   validateCredentials,
 } from "@/lib/admin-session";
+import { parseAndValidate } from "@/lib/api-validation";
+import { PREFIX, consoleError } from "@/lib/console";
+import { checkAuthRateLimit } from "@/lib/rate-limit";
 
-interface LoginRequestBody {
+interface LoginRequestBody extends Record<string, unknown> {
   username: string;
   password: string;
 }
@@ -24,30 +30,40 @@ interface LoginRequestBody {
  * Authenticates admin user and creates a session
  */
 export async function POST(request: NextRequest) {
-  try {
-    const body = (await request.json()) as LoginRequestBody;
-    const { username, password } = body;
+  // Rate limit: 10 attempts per IP per minute
+  const rateLimitResponse = checkAuthRateLimit(request);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
 
-    // Validate required fields
-    if (!username || !password) {
-      return NextResponse.json(
-        { success: false, error: "Username and password are required" },
-        { status: 400 },
-      );
+  try {
+    // Parse and validate request body
+    const validation = await parseAndValidate<LoginRequestBody>(request, {
+      required: ["username", "password"],
+      types: {
+        username: "string",
+        password: "string",
+      },
+    });
+
+    if (!validation.success) {
+      return validation.response;
     }
+
+    const { username, password } = validation.data;
 
     // Validate credentials
     const result = validateCredentials(username, password);
 
     if (!result.valid) {
       return NextResponse.json(
-        { success: false, error: "Invalid credentials" },
+        { error: "Unauthorized", message: "Invalid credentials" },
         { status: 401 },
       );
     }
 
     // Create session
-    const session = createSession(result.user as string);
+    const session = await createSession(result.user as string);
 
     // Create response with session cookie
     const response = NextResponse.json({ success: true });
@@ -61,9 +77,17 @@ export async function POST(request: NextRequest) {
     });
 
     return response;
-  } catch {
+  } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] POST /api/admin/login failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
-      { success: false, error: "Invalid request body" },
+      {
+        error: "Invalid request body",
+        message:
+          "Request body must be valid JSON with username and password fields",
+      },
       { status: 400 },
     );
   }

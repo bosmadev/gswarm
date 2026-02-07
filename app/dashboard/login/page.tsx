@@ -50,7 +50,11 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || "Login failed. Please check your credentials.");
+        const errorMessage =
+          data.error === "Unauthorized"
+            ? "Invalid username or password"
+            : data.error || "Login failed. Please check your credentials.";
+        setError(errorMessage);
         return;
       }
 
@@ -107,7 +111,7 @@ export default function LoginPage() {
             {/* Error Message */}
             {error && (
               <div
-                className="p-3 rounded-lg bg-red/10 border border-red/30 text-red text-sm"
+                className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm"
                 role="alert"
                 aria-live="polite"
               >

@@ -10,10 +10,19 @@ temp/
 __pycache__/
 .venv/
 .pytest_cache/
+tmp/
+test-results/
+
+# Runtime data (tokens, sessions, metrics)
+data/
 
 # Files
 !.gitkeep
+.mcp.json
 .env.keys
 tsconfig.tsbuildinfo
 next-env.d.ts
 *.log
+.server.pid
+nul
+

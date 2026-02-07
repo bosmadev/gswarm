@@ -1,6 +1,11 @@
 /**
- * Project Status Storage - File-based persistence for project status data
- * Adapted from pulsona's GSwarmRedisState for file-based storage
+ * @file lib/gswarm/storage/projects.ts
+ * @version 1.0
+ * @description Project status storage with LRU tracking and cooldown management.
+ *
+ * File-based persistence for per-project status data including success/error
+ * counts, consecutive error tracking, and exponential backoff cooldowns.
+ * Adapted from GSwarm's GSwarmRedisState for file-based storage.
  */
 
 import type {
@@ -77,7 +82,7 @@ export async function loadProjectStatuses(): Promise<
 
   if (!result.success) {
     // File not found is not an error - return empty map
-    if (result.error === "File not found") {
+    if (result.error?.startsWith("File not found")) {
       const emptyMap = new Map<string, ProjectStatus>();
       projectCache.set(emptyMap);
       return { success: true, data: emptyMap };
@@ -185,7 +190,19 @@ export async function saveProjectStatuses(
 }
 
 /**
- * Record a successful request for a project
+ * Records a successful request for a project.
+ * Resets consecutive error count and clears the last error type.
+ *
+ * @param projectId - The project to record success for
+ * @returns Updated project status
+ *
+ * @example
+ * ```ts
+ * const result = await recordProjectSuccess("my-project-123");
+ * if (result.success) {
+ *   console.log(`Total successes: ${result.data.successCount}`);
+ * }
+ * ```
  */
 export async function recordProjectSuccess(
   projectId: string,
@@ -215,7 +232,22 @@ export async function recordProjectSuccess(
 }
 
 /**
- * Record an error for a project with exponential backoff cooldown
+ * Records an error for a project with exponential backoff cooldown.
+ * Increments consecutive error count and calculates cooldown duration
+ * based on the configured backoff multiplier and threshold.
+ *
+ * @param projectId - The project to record the error for
+ * @param errorType - The type of error that occurred
+ * @param quotaResetTime - Optional Unix timestamp (ms) when quota resets
+ * @returns Updated project status with cooldown information
+ *
+ * @example
+ * ```ts
+ * const result = await recordProjectError("my-project-123", "quota_exhausted", Date.now() + 3600000);
+ * if (result.success) {
+ *   console.log(`Project in cooldown until: ${new Date(result.data.cooldownUntil)}`);
+ * }
+ * ```
  */
 export async function recordProjectError(
   projectId: string,
@@ -301,7 +333,18 @@ export async function isProjectInCooldown(
 }
 
 /**
- * Get all available projects (not in cooldown), sorted by lastUsedAt ascending
+ * Gets all available projects (not in cooldown), sorted by lastUsedAt ascending (LRU first).
+ *
+ * @returns Array of project statuses for available projects
+ *
+ * @example
+ * ```ts
+ * const result = await getAvailableProjects();
+ * if (result.success && result.data.length > 0) {
+ *   const leastRecentlyUsed = result.data[0];
+ *   console.log(`Next project to use: ${leastRecentlyUsed.projectId}`);
+ * }
+ * ```
  */
 export async function getAvailableProjects(): Promise<
   StorageResult<ProjectStatus[]>

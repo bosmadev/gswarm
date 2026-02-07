@@ -313,8 +313,9 @@ export function ErrorLog() {
     apiUrl,
     fetcher,
     {
-      refreshInterval: 10000, // Refresh every 10 seconds
-      revalidateOnFocus: true,
+      refreshInterval: 60000, // Refresh every 60 seconds
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
     },
   );
 
@@ -442,7 +443,7 @@ export function ErrorLog() {
       <CardContent className="p-0">
         {error ? (
           <div className="flex flex-col items-center justify-center py-8 text-center px-6">
-            <p className="text-sm text-red mb-4">
+            <p className="text-sm text-red-500 mb-4">
               Failed to load errors. Please try again.
             </p>
             <Button variant="secondary" onClick={handleRefresh}>

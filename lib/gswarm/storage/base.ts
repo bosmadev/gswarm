@@ -1,17 +1,90 @@
 /**
- * Base Storage Utilities
+ * @file lib/gswarm/storage/base.ts
+ * @version 1.0
+ * @description Base storage utilities for file-based persistence.
  *
  * Provides file-based storage operations with:
  * - In-memory caching with TTL support
  * - Simple optimistic file locking
  * - Atomic file writes (temp file + rename)
  * - Directory structure management
+ * - Injectable FileSystem for testability
  */
 
-import * as fs from "node:fs/promises";
+import * as nodeFs from "node:fs/promises";
 import * as path from "node:path";
 import { PREFIX, consoleDebug, consoleError, consoleLog } from "@/lib/console";
+import { GSwarmConfigError } from "../errors";
 import type { StorageResult } from "../types";
+
+// =============================================================================
+// FILE SYSTEM ABSTRACTION
+// =============================================================================
+
+/**
+ * Abstraction over async file system operations.
+ * Defaults to Node.js `fs/promises`. Pass a custom implementation
+ * for testing or alternative storage backends.
+ */
+export interface FileSystem {
+  readFile(path: string, encoding: BufferEncoding): Promise<string>;
+  writeFile(
+    path: string,
+    data: string,
+    encoding: BufferEncoding,
+  ): Promise<void>;
+  mkdir(
+    path: string,
+    options?: { recursive: boolean },
+  ): Promise<string | undefined>;
+  unlink(path: string): Promise<void>;
+  rename(oldPath: string, newPath: string): Promise<void>;
+  stat(path: string): Promise<{
+    size: number;
+    birthtime: Date;
+    mtime: Date;
+    isFile(): boolean;
+    isDirectory(): boolean;
+  }>;
+  readdir(
+    path: string,
+    options: { withFileTypes: true },
+  ): Promise<Array<{ name: string; isFile(): boolean }>>;
+}
+
+/** Default file system backed by Node.js fs/promises */
+const defaultFs: FileSystem = {
+  readFile: (p, enc) => nodeFs.readFile(p, enc) as Promise<string>,
+  writeFile: (p, data, enc) => nodeFs.writeFile(p, data, enc),
+  mkdir: (p, opts) => nodeFs.mkdir(p, opts),
+  unlink: (p) => nodeFs.unlink(p),
+  rename: (oldP, newP) => nodeFs.rename(oldP, newP),
+  stat: (p) => nodeFs.stat(p),
+  readdir: (p, opts) =>
+    nodeFs.readdir(p, opts) as Promise<
+      Array<{ name: string; isFile(): boolean }>
+    >,
+};
+
+/** Module-level file system instance, replaceable via `setFileSystem` */
+let activeFs: FileSystem = defaultFs;
+
+/**
+ * Replace the file system implementation used by all storage operations.
+ * Primarily intended for testing. Pass `undefined` to restore the default.
+ *
+ * @param fs - Custom file system or undefined to reset
+ */
+export function setFileSystem(fs: FileSystem | undefined): void {
+  activeFs = fs ?? defaultFs;
+}
+
+/**
+ * Get the currently active file system implementation.
+ */
+export function getFileSystem(): FileSystem {
+  return activeFs;
+}
 
 // =============================================================================
 // CONSTANTS
@@ -24,7 +97,36 @@ const DATA_DIR = path.join(process.cwd(), "data");
 export const STORAGE_BASE_DIR = DATA_DIR;
 
 /** Default timeout for file locks in milliseconds */
-export const LOCK_TIMEOUT_MS = 5000;
+export const DEFAULT_LOCK_TIMEOUT_MS = 5000;
+
+/**
+ * @deprecated Use DEFAULT_LOCK_TIMEOUT_MS instead. Kept for backward compatibility.
+ */
+export const LOCK_TIMEOUT_MS = DEFAULT_LOCK_TIMEOUT_MS;
+
+/** Configurable lock timeout -- call `setLockTimeout` to override */
+let configuredLockTimeoutMs: number = DEFAULT_LOCK_TIMEOUT_MS;
+
+/**
+ * Override the default lock timeout used when no explicit timeout is passed.
+ *
+ * @param timeoutMs - Lock timeout in milliseconds (must be > 0)
+ */
+export function setLockTimeout(timeoutMs: number): void {
+  if (timeoutMs <= 0) {
+    throw new GSwarmConfigError("Lock timeout must be a positive number", {
+      configKey: "lockTimeout",
+    });
+  }
+  configuredLockTimeoutMs = timeoutMs;
+}
+
+/**
+ * Get the currently configured lock timeout.
+ */
+export function getLockTimeout(): number {
+  return configuredLockTimeoutMs;
+}
 
 // =============================================================================
 // IN-MEMORY CACHE SYSTEM
@@ -169,7 +271,11 @@ export class CacheManager<T> {
  * Get today's date as YYYY-MM-DD string
  */
 export function getTodayDateString(): string {
-  return new Date().toISOString().split("T")[0];
+  const datePart = new Date().toISOString().split("T")[0];
+  if (!datePart) {
+    return new Date().toISOString().slice(0, 10);
+  }
+  return datePart;
 }
 
 // =============================================================================
@@ -196,12 +302,12 @@ const activeLocks = new Map<string, FileLock>();
  * This is not a distributed lock and only works within a single process.
  *
  * @param filePath - Path to file to lock
- * @param timeout - Lock timeout in milliseconds (default: LOCK_TIMEOUT_MS)
+ * @param timeout - Lock timeout in milliseconds (default: configurable via setLockTimeout)
  * @returns true if lock acquired, false if already locked
  */
 export async function acquireLock(
   filePath: string,
-  timeout: number = LOCK_TIMEOUT_MS,
+  timeout: number = configuredLockTimeoutMs,
 ): Promise<boolean> {
   const normalizedPath = path.resolve(filePath);
   const existingLock = activeLocks.get(normalizedPath);
@@ -260,7 +366,7 @@ export function releaseLock(filePath: string): void {
  */
 export async function ensureDir(dirPath: string): Promise<StorageResult<void>> {
   try {
-    await fs.mkdir(dirPath, { recursive: true });
+    await activeFs.mkdir(dirPath, { recursive: true });
     return { success: true, data: undefined };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
@@ -268,6 +374,11 @@ export async function ensureDir(dirPath: string): Promise<StorageResult<void>> {
     if (err.code === "EEXIST") {
       return { success: true, data: undefined };
     }
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to create directory: ${dirPath}`,
+      err.message,
+    );
     return {
       success: false,
       error: `Failed to create directory: ${err.message}`,
@@ -344,7 +455,7 @@ export async function getFileStats(
   filePath: string,
 ): Promise<StorageResult<FileStats>> {
   try {
-    const stat = await fs.stat(filePath);
+    const stat = await activeFs.stat(filePath);
     return {
       success: true,
       data: {
@@ -363,6 +474,11 @@ export async function getFileStats(
         error: `File not found: ${filePath}`,
       };
     }
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to get file stats: ${filePath}`,
+      err.message,
+    );
     return {
       success: false,
       error: `Failed to get file stats: ${err.message}`,
@@ -402,7 +518,7 @@ export async function readJsonFile<T>(
   }
 
   try {
-    const content = await fs.readFile(filePath, "utf-8");
+    const content = await activeFs.readFile(filePath, "utf-8");
     const data = JSON.parse(content) as T;
 
     // Store in cache if requested
@@ -481,10 +597,10 @@ export async function writeJsonFile<T>(
       : JSON.stringify(data);
 
     // Write to temp file
-    await fs.writeFile(tempPath, content, "utf-8");
+    await activeFs.writeFile(tempPath, content, "utf-8");
 
     // Atomic rename
-    await fs.rename(tempPath, filePath);
+    await activeFs.rename(tempPath, filePath);
 
     // Invalidate cache if requested
     if (shouldInvalidate) {
@@ -503,7 +619,7 @@ export async function writeJsonFile<T>(
 
     // Clean up temp file if it exists
     try {
-      await fs.unlink(tempPath);
+      await activeFs.unlink(tempPath);
     } catch {
       // Ignore cleanup errors
     }
@@ -525,7 +641,7 @@ export async function deleteFile(
   filePath: string,
 ): Promise<StorageResult<void>> {
   try {
-    await fs.unlink(filePath);
+    await activeFs.unlink(filePath);
     invalidateCache(filePath);
     consoleDebug(PREFIX.DEBUG, `File deleted: ${filePath}`);
     return { success: true, data: undefined };
@@ -561,7 +677,7 @@ export async function listFiles(
   extension?: string,
 ): Promise<StorageResult<string[]>> {
   try {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    const entries = await activeFs.readdir(dirPath, { withFileTypes: true });
     let files = entries
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name);
@@ -595,13 +711,39 @@ export async function listFiles(
  * Check if a file exists
  *
  * @param filePath - Path to check
- * @returns true if file exists, false otherwise
+ * @returns StorageResult with boolean indicating existence
  */
-export async function fileExists(filePath: string): Promise<boolean> {
+export async function fileExists(
+  filePath: string,
+): Promise<StorageResult<boolean>> {
   try {
-    const stat = await fs.stat(filePath);
-    return stat.isFile();
-  } catch {
-    return false;
+    const stat = await activeFs.stat(filePath);
+    return { success: true, data: stat.isFile() };
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      return { success: true, data: false };
+    }
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to check file existence: ${filePath}`,
+      err.message,
+    );
+    return {
+      success: false,
+      error: `Failed to check file existence: ${err.message}`,
+    };
   }
+}
+
+/**
+ * Check if a file exists (simple boolean version)
+ *
+ * @param filePath - Path to check
+ * @returns true if file exists, false otherwise (swallows errors)
+ * @deprecated Prefer fileExists() which returns StorageResult for proper error handling
+ */
+export async function fileExistsSimple(filePath: string): Promise<boolean> {
+  const result = await fileExists(filePath);
+  return result.success ? result.data : false;
 }

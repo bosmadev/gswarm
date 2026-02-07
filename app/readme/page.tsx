@@ -4,8 +4,8 @@ import type { Metadata } from "next";
 import { ReadmePageClient } from "./client";
 
 export const metadata: Metadata = {
-  title: "README | Next.js Template",
-  description: "Next.js template documentation and system overview",
+  title: "README | GSwarm API",
+  description: "GSwarm API documentation and system overview",
 };
 
 /**

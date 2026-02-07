@@ -1,11 +1,14 @@
 /**
- * Error Log Storage - File-based persistence for error tracking
+ * @file lib/gswarm/storage/errors.ts
+ * @version 1.0
+ * @description Error log storage with daily file rotation and caching.
  *
  * Provides storage operations for recording, querying, and managing
  * error logs with daily file organization and in-memory caching.
+ * Supports filtering by type, account, project, and date range.
  */
 
-import * as path from "node:path";
+import { join } from "node:path";
 import type { StorageResult } from "../types";
 import {
   deleteFile,
@@ -205,13 +208,29 @@ export async function loadErrorLog(
 }
 
 /**
- * Records a new error to the log
+ * Records a new error to the daily log file.
+ * Automatically manages log rotation to prevent unbounded growth.
+ *
+ * @param options - Error details including type, message, and context
+ * @returns The created error log entry
+ *
+ * @example
+ * ```ts
+ * const result = await recordError({
+ *   type: "api",
+ *   message: "Generation failed",
+ *   projectId: "my-project-123",
+ *   statusCode: 500,
+ *   endpoint: "/api/gswarm/generate",
+ * });
+ * ```
  */
 export async function recordError(
   options: RecordErrorOptions,
 ): Promise<StorageResult<ErrorLogEntry>> {
   const now = new Date();
-  const errorDate = now.toISOString().split("T")[0];
+  const errorDate =
+    now.toISOString().split("T")[0] ?? now.toISOString().slice(0, 10);
   const loadResult = await loadErrorLog(errorDate);
 
   if (!loadResult.success) {
@@ -262,7 +281,24 @@ export async function recordError(
 }
 
 /**
- * Queries errors with optional filtering
+ * Queries errors with optional filtering by type, account, project, and date range.
+ * Results are sorted by timestamp descending (most recent first).
+ *
+ * @param options - Query options for filtering and pagination
+ * @returns Array of matching error log entries
+ *
+ * @example
+ * ```ts
+ * const result = await queryErrors({
+ *   type: "rate_limit",
+ *   startDate: "2026-01-01",
+ *   endDate: "2026-01-31",
+ *   limit: 50,
+ * });
+ * if (result.success) {
+ *   console.log(`Found ${result.data.length} rate limit errors`);
+ * }
+ * ```
  */
 export async function queryErrors(
   options: QueryErrorsOptions = {},
@@ -278,18 +314,29 @@ export async function queryErrors(
 
   const start = startDate || getTodayDateString();
   const end = endDate || getTodayDateString();
-  const allErrors: ErrorLogEntry[] = [];
 
-  // Iterate through each day in the range
+  // Collect all dates in the range
+  const dates: string[] = [];
   const startDt = new Date(start);
   const endDt = new Date(end);
 
   for (let d = new Date(startDt); d <= endDt; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().split("T")[0];
-    const dailyResult = await loadErrorLog(dateStr);
+    dates.push(d.toISOString().split("T")[0] ?? d.toISOString().slice(0, 10));
+  }
 
-    if (dailyResult.success && dailyResult.data.errors.length > 0) {
-      allErrors.push(...dailyResult.data.errors);
+  // Load all days in parallel
+  const settled = await Promise.allSettled(
+    dates.map((dateStr) => loadErrorLog(dateStr)),
+  );
+
+  const allErrors: ErrorLogEntry[] = [];
+  for (const dayResult of settled) {
+    if (
+      dayResult.status === "fulfilled" &&
+      dayResult.value.success &&
+      dayResult.value.data.errors.length > 0
+    ) {
+      allErrors.push(...dayResult.value.data.errors);
     }
   }
 
@@ -389,7 +436,7 @@ export async function clearAllErrors(): Promise<StorageResult<number>> {
   const errors: string[] = [];
 
   for (const file of listResult.data) {
-    const filePath = path.join(errorsDir, file);
+    const filePath = join(errorsDir, file);
     const deleteResult = await deleteFile(filePath);
 
     if (deleteResult.success) {
@@ -433,7 +480,9 @@ export async function cleanupOldErrors(
 
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - keepDays);
-  const cutoffStr = cutoffDate.toISOString().split("T")[0];
+  const cutoffStr =
+    cutoffDate.toISOString().split("T")[0] ??
+    cutoffDate.toISOString().slice(0, 10);
 
   let deletedCount = 0;
   const errors: string[] = [];
@@ -445,7 +494,7 @@ export async function cleanupOldErrors(
 
     const fileDate = dateMatch[1];
     if (fileDate < cutoffStr) {
-      const filePath = path.join(errorsDir, file);
+      const filePath = join(errorsDir, file);
       const deleteResult = await deleteFile(filePath);
 
       if (deleteResult.success) {

@@ -23,7 +23,7 @@ const inputVariants = cva(
       },
       variant: {
         default: "border-border",
-        error: "border-red focus:ring-red focus:border-red",
+        error: "border-red-500 focus:ring-red focus:border-red-500",
       },
     },
     defaultVariants: {
@@ -119,7 +119,11 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         />
 
         {error && (
-          <p id={`${inputId}-error`} className="text-xs text-red" role="alert">
+          <p
+            id={`${inputId}-error`}
+            className="text-xs text-red-500"
+            role="alert"
+          >
             {error}
           </p>
         )}

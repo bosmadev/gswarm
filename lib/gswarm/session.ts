@@ -5,6 +5,7 @@
  * Uses cookies for session tracking and CSRF state storage.
  */
 
+import crypto from "node:crypto";
 import type { NextRequest } from "next/server";
 import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
 
@@ -87,6 +88,10 @@ function getSessionId(request: NextRequest): string | null {
 
 /**
  * Extract admin credentials from request
+ *
+ * SECURITY: Only accepts credentials via Authorization header or
+ * X-Admin-Password header. Cookie-based password transmission was
+ * removed to prevent exposure in browser history/logs and XSS risk.
  */
 function getAdminCredentials(request: NextRequest): string | null {
   // Check Authorization header (Basic auth)
@@ -96,7 +101,7 @@ function getAdminCredentials(request: NextRequest): string | null {
       const base64 = authHeader.slice(6);
       const decoded = Buffer.from(base64, "base64").toString("utf-8");
       const [, password] = decoded.split(":");
-      return password;
+      return password ?? null;
     } catch {
       return null;
     }
@@ -108,13 +113,25 @@ function getAdminCredentials(request: NextRequest): string | null {
     return passwordHeader;
   }
 
-  // Check cookie
-  const passwordCookie = request.cookies.get("admin_password");
-  if (passwordCookie?.value) {
-    return passwordCookie.value;
+  return null;
+}
+
+/**
+ * Timing-safe password comparison to prevent timing attacks.
+ * Returns true if passwords match, false otherwise.
+ */
+function safePasswordCompare(provided: string, expected: string): boolean {
+  const providedBuf = Buffer.from(provided, "utf-8");
+  const expectedBuf = Buffer.from(expected, "utf-8");
+
+  // If lengths differ, still do a comparison to maintain constant time
+  if (providedBuf.length !== expectedBuf.length) {
+    // Compare against expected to consume same time regardless
+    crypto.timingSafeEqual(expectedBuf, expectedBuf);
+    return false;
   }
 
-  return null;
+  return crypto.timingSafeEqual(providedBuf, expectedBuf);
 }
 
 /**
@@ -146,10 +163,12 @@ export async function validateAdminSession(
       );
     }
 
-    // Development mode only: allow access without password
-    consoleDebug(
-      PREFIX.DEBUG,
-      "[Session] No ADMIN_PASSWORD configured (dev mode), allowing access",
+    // Development mode: allow access but log prominently
+    // SECURITY: This path is only reachable when NODE_ENV !== "production"
+    // AND ADMIN_PASSWORD is not set. Still log a warning for visibility.
+    consoleError(
+      PREFIX.WARNING,
+      "[Session] ⚠️ ADMIN_PASSWORD not configured — dev mode access granted. Set ADMIN_PASSWORD to secure this endpoint.",
     );
     return createValidSession("dev-session");
   }
@@ -162,8 +181,8 @@ export async function validateAdminSession(
     return createInvalidSession("No admin credentials provided");
   }
 
-  // Validate password
-  if (providedPassword !== adminPassword) {
+  // Validate password using timing-safe comparison
+  if (!safePasswordCompare(providedPassword, adminPassword)) {
     consoleError(PREFIX.ERROR, "[Session] Invalid admin password");
     return createInvalidSession("Invalid admin password");
   }

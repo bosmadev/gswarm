@@ -8,15 +8,17 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  APP_NAME: gswarm-api
-  DEPLOY_PATH: /opt/gswarm-api
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read app metadata from package.json
+        run: |
+          APP_NAME=$(jq -r '.name' package.json)
+          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
+          echo "DEPLOY_PATH=/opt/$APP_NAME" >> "$GITHUB_ENV"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -29,6 +31,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Setup uv (Python package manager)
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -39,21 +46,12 @@ jobs:
           pnpm build
           cp -r public .next/standalone/ 2>/dev/null || echo "[INFO] No public folder"
           cp -r .next/static .next/standalone/.next/
-          # Copy launch.sh for server control
-          cp scripts/launch.sh .next/standalone/
-          chmod +x .next/standalone/launch.sh
-          # Copy TypeScript source files for Node.js 25+ native TS execution
-          mkdir -p .next/standalone/lib/gswarm/storage
-          mkdir -p .next/standalone/scripts
-          cp lib/console.ts .next/standalone/lib/
-          cp lib/gswarm/*.ts .next/standalone/lib/gswarm/
-          cp lib/gswarm/storage/*.ts .next/standalone/lib/gswarm/storage/
-          cp scripts/test-api-keys.ts .next/standalone/scripts/
+          # post-build.mjs does the rest.
 
       - name: Deploy to Azure VM (WSL)
         uses: Burnett01/rsync-deployments@v8
         with:
-          switches: -avzr --delete
+          switches: -avzr --delete --exclude=data/
           path: .next/standalone/
           remote_path: ${{ env.DEPLOY_PATH }}/
           remote_host: ${{ secrets.AZURE_VM_IP }}
@@ -66,20 +64,20 @@ jobs:
           host: ${{ secrets.AZURE_VM_IP }}
           username: ${{ secrets.AZURE_VM_USER }}
           key: ${{ secrets.AZURE_SSH_PRIVATE_KEY }}
+          envs: APP_NAME,DEPLOY_PATH
           script: |
             # Create/overwrite service file (tee always overwrites)
-            sudo tee /etc/systemd/system/gswarm-api.service > /dev/null << 'SERVICEFILE'
+            sudo tee /etc/systemd/system/${APP_NAME}.service > /dev/null << SERVICEFILE
             [Unit]
-            Description=GSwarm API
+            Description=${APP_NAME}
             After=network.target
 
             [Service]
             Type=simple
-            User=gswarm-api
-            WorkingDirectory=/opt/gswarm-api
+            User=${APP_NAME}
+            WorkingDirectory=${DEPLOY_PATH}
             Environment=NODE_ENV=production
-            Environment=PORT=3001
-            EnvironmentFile=-/opt/gswarm-api/.env
+            EnvironmentFile=-${DEPLOY_PATH}/.env
             ExecStart=/usr/bin/node server.js
             Restart=always
             RestartSec=5
@@ -89,32 +87,35 @@ jobs:
             SERVICEFILE
 
             # Ensure service user exists
-            id gswarm-api &>/dev/null || sudo useradd --system --shell /usr/sbin/nologin gswarm-api
+            id ${APP_NAME} &>/dev/null || sudo useradd --system --shell /usr/sbin/nologin ${APP_NAME}
 
             # Set permissions
-            sudo chown -R gswarm-api:gswarm-api /opt/gswarm-api
+            sudo chown -R ${APP_NAME}:${APP_NAME} ${DEPLOY_PATH}
             # Restrict .env file access (contains secrets)
-            [ -f /opt/gswarm-api/.env ] && sudo chmod 600 /opt/gswarm-api/.env
+            [ -f ${DEPLOY_PATH}/.env ] && sudo chmod 600 ${DEPLOY_PATH}/.env
 
             # Reload and restart (handles stop/start automatically)
             sudo systemctl daemon-reload
-            sudo systemctl enable gswarm-api
-            sudo systemctl restart gswarm-api
+            sudo systemctl enable ${APP_NAME}
+            sudo systemctl restart ${APP_NAME}
 
             # Verify service started
             sleep 2
-            sudo systemctl status gswarm-api --no-pager
+            sudo systemctl status ${APP_NAME} --no-pager
 
-            # Health check - verify HTTP response
+            # Health check - verify HTTP response (dynamic port from .env)
             echo "Running health check..."
+            # Read GLOBAL_PORT from .env (default to 3000 if not set)
+            APP_PORT=$(grep -oP '^GLOBAL_PORT=\K\d+' ${DEPLOY_PATH}/.env 2>/dev/null || echo "3000")
+            echo "Using port: $APP_PORT"
             for i in {1..5}; do
-              if curl -sf http://localhost:3001 > /dev/null 2>&1; then
-                echo "Health check passed on attempt $i"
+              if curl -sf "http://127.0.0.1:${APP_PORT}" > /dev/null 2>&1; then
+                echo "Health check passed on attempt $i (port ${APP_PORT})"
                 exit 0
               fi
               echo "Attempt $i failed, waiting..."
               sleep 2
             done
-            echo "Health check failed after 5 attempts"
-            sudo journalctl -u gswarm-api --no-pager -n 50
+            echo "Health check failed after 5 attempts (port ${APP_PORT})"
+            sudo journalctl -u ${APP_NAME} --no-pager -n 50
             exit 1

@@ -1,7 +1,7 @@
 /**
  * @file components/providers/command-palette-provider.tsx
- * @description Enhanced command palette provider with keyboard shortcuts,
- * fuzzy search, and recent commands history.
+ * @description Command palette provider with keyboard shortcuts,
+ * fuzzy search, and recent commands history for GSwarm navigation.
  *
  * @module components/providers/command-palette-provider
  */
@@ -9,20 +9,19 @@
 "use client";
 
 import {
-  BarChart3,
-  Brain,
-  Calculator,
-  ChartLine,
+  AlertCircle,
   Check,
   Clock,
-  FolderOpen,
+  Cog,
+  FolderKanban,
+  Hand,
   Home,
-  LineChart,
+  Key,
+  LayoutDashboard,
   Search,
-  Settings,
-  TrendingUp,
+  Terminal,
   Type,
-  Wallet,
+  Users,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
@@ -36,8 +35,8 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
-import { PREFIX, consoleLog } from "@/lib/console";
 import { useFont } from "./font-provider";
+import { useReactGrab } from "./react-grab-provider";
 
 // =============================================================================
 // CONTEXT
@@ -83,7 +82,7 @@ interface NavigationItem {
 }
 
 // =============================================================================
-// NAVIGATION ITEMS
+// NAVIGATION ITEMS (matches sidebar in shared.tsx)
 // =============================================================================
 
 const navigationItems: NavigationItem[] = [
@@ -93,71 +92,63 @@ const navigationItems: NavigationItem[] = [
     icon: Home,
     href: "/",
     shortcut: "G H",
-    keywords: ["dashboard", "main", "start"],
+    keywords: ["readme", "documentation", "start"],
   },
   {
-    id: "strategies",
-    label: "Strategies",
-    icon: Settings,
-    href: "/strategies",
-    shortcut: "G S",
-    keywords: ["config", "settings", "trading"],
+    id: "overview",
+    label: "Dashboard Overview",
+    icon: LayoutDashboard,
+    href: "/dashboard",
+    shortcut: "G D",
+    keywords: ["dashboard", "admin", "main"],
   },
   {
-    id: "positions",
-    label: "Positions",
-    icon: Wallet,
-    href: "/positions",
-    shortcut: "G P",
-    keywords: ["trades", "open", "closed", "orders"],
-  },
-  {
-    id: "backtest",
-    label: "Backtesting",
-    icon: Calculator,
-    href: "/backtest",
-    shortcut: "G B",
-    keywords: ["simulation", "test", "historical"],
-  },
-  {
-    id: "training",
-    label: "ML Training",
-    icon: Brain,
-    href: "/training",
-    shortcut: "G T",
-    keywords: ["machine learning", "ai", "model"],
-  },
-  {
-    id: "metrics",
-    label: "Metrics",
-    icon: BarChart3,
-    href: "/metrics",
-    shortcut: "G M",
-    keywords: ["performance", "stats", "statistics"],
-  },
-  {
-    id: "optimizers",
-    label: "Optimizers",
-    icon: TrendingUp,
-    href: "/optimizers",
-    shortcut: "G O",
-    keywords: ["ai", "ml", "optimization"],
-  },
-  {
-    id: "portfolio",
-    label: "Portfolio",
-    icon: LineChart,
-    href: "/portfolio",
-    shortcut: "G R",
-    keywords: ["assets", "balance", "allocation"],
-  },
-  {
-    id: "analytical",
-    label: "Analytics",
-    icon: ChartLine,
-    href: "/analytical",
+    id: "accounts",
+    label: "Accounts",
+    icon: Users,
+    href: "/dashboard?tab=accounts",
     shortcut: "G A",
-    keywords: ["analysis", "data", "insights"],
+    keywords: ["users", "oauth", "google", "tokens"],
+  },
+  {
+    id: "projects",
+    label: "Projects",
+    icon: FolderKanban,
+    href: "/dashboard?tab=projects",
+    shortcut: "G P",
+    keywords: ["gemini", "rotation", "api keys"],
+  },
+  {
+    id: "errors",
+    label: "Error Log",
+    icon: AlertCircle,
+    href: "/dashboard?tab=errors",
+    shortcut: "G E",
+    keywords: ["logs", "failures", "issues", "debug"],
+  },
+  {
+    id: "cli",
+    label: "CLI",
+    icon: Terminal,
+    href: "/dashboard?tab=cli",
+    shortcut: "G C",
+    keywords: ["terminal", "command", "shell"],
+  },
+  {
+    id: "api-keys",
+    label: "API Keys",
+    icon: Key,
+    href: "/dashboard?tab=api-keys",
+    shortcut: "G K",
+    keywords: ["keys", "authentication", "access"],
+  },
+  {
+    id: "config",
+    label: "Configuration",
+    icon: Cog,
+    href: "/dashboard?tab=config",
+    shortcut: "G S",
+    keywords: ["settings", "model", "temperature", "gswarm"],
   },
 ];
 
@@ -193,13 +184,9 @@ function searchItems<T extends { label: string; keywords?: string[] }>(
   if (!query) return items;
 
   return items.filter((item) => {
-    // Search in label
     if (fuzzySearch(query, item.label)) return true;
-
-    // Search in keywords
     if (item.keywords?.some((keyword) => fuzzySearch(query, keyword)))
       return true;
-
     return false;
   });
 }
@@ -208,7 +195,7 @@ function searchItems<T extends { label: string; keywords?: string[] }>(
 // LOCAL STORAGE
 // =============================================================================
 
-const RECENT_COMMANDS_KEY = "pulsona-recent-commands";
+const RECENT_COMMANDS_KEY = `${process.env.GLOBAL_APP_NAME}-recent-commands`;
 const MAX_RECENT_COMMANDS = 5;
 
 function loadRecentCommands(): string[] {
@@ -250,6 +237,9 @@ function CommandPalette({
   const [query, setQuery] = React.useState("");
   const router = useRouter();
   const { font, setFont } = useFont();
+
+  // React Grab integration (always safe — provider renders no-op in non-DEBUG mode)
+  const reactGrab = useReactGrab();
 
   // Filter items based on search query
   const filteredNavigation = searchItems(navigationItems, query);
@@ -334,7 +324,7 @@ function CommandPalette({
             <Search className="w-10 h-10 text-text-tertiary" />
             <p className="text-text-secondary">No results found.</p>
             <p className="text-xs text-text-tertiary">
-              Try searching for pages, strategies, or actions
+              Try searching for pages or actions
             </p>
           </div>
         </CommandEmpty>
@@ -407,23 +397,26 @@ function CommandPalette({
           </CommandItem>
         </CommandGroup>
 
-        <CommandSeparator />
-
-        {/* Quick Actions */}
-        <CommandGroup heading="Quick Actions">
-          <CommandItem
-            value="Open files"
-            onSelect={() =>
-              runCommand(() =>
-                consoleLog(PREFIX.UI, "Open files action triggered"),
-              )
-            }
-          >
-            <FolderOpen className="mr-2 h-4 w-4" />
-            <span>Open Files</span>
-            <CommandShortcut>⌘O</CommandShortcut>
-          </CommandItem>
-        </CommandGroup>
+        {/* Developer Tools (DEBUG mode only) */}
+        {process.env.GLOBAL_DEBUG_MODE === "true" && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Developer Tools">
+              <CommandItem
+                value="toggle-react-grab"
+                keywords={["grab", "select", "copy", "context", "ai", "dev"]}
+                onSelect={() => runCommand(() => reactGrab.toggle())}
+              >
+                <Hand className="mr-2 h-4 w-4" />
+                <span>Toggle React Grab</span>
+                {reactGrab.isActive && (
+                  <Check className="ml-auto h-4 w-4 text-orange" />
+                )}
+                <CommandShortcut>⌃⇧G</CommandShortcut>
+              </CommandItem>
+            </CommandGroup>
+          </>
+        )}
 
         {/* Help */}
         <CommandSeparator />

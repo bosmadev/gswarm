@@ -55,6 +55,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -81,6 +82,14 @@ interface CLICommand {
     placeholder: string;
   };
   opensExternal?: string;
+}
+
+/** Project entry from GET /api/projects */
+interface ProjectEntry {
+  id: string;
+  name: string;
+  apiEnabled: boolean;
+  status: string;
 }
 
 // =============================================================================
@@ -171,6 +180,165 @@ function formatTimestamp(date: Date): string {
   });
 }
 
+/**
+ * Call real GSwarm API endpoints based on command ID.
+ */
+async function callApi(
+  commandId: string,
+  input?: string,
+): Promise<{ output: string; status: "success" | "error" }> {
+  const fetchJson = async (url: string, opts?: RequestInit) => {
+    const res = await fetch(url, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || data.message || `HTTP ${res.status}`);
+    }
+    return data;
+  };
+
+  switch (commandId) {
+    case "login": {
+      // Open OAuth popup — same flow as accounts tab
+      window.open(
+        "/api/auth/google",
+        "google-oauth",
+        "width=500,height=600,popup=true",
+      );
+      return {
+        output:
+          "OAuth login window opened.\nComplete the Google sign-in flow in the popup.",
+        status: "success",
+      };
+    }
+
+    case "logout": {
+      if (!input)
+        return { output: "Error: email address required", status: "error" };
+      // Find account ID by email
+      const accounts = await fetchJson("/api/accounts");
+      const account = accounts.accounts?.find(
+        (a: { email: string }) => a.email === input,
+      );
+      if (!account) {
+        return { output: `Account not found: ${input}`, status: "error" };
+      }
+      await fetchJson(`/api/accounts/${account.id}/logout`, { method: "POST" });
+      return { output: `Logged out: ${input}`, status: "success" };
+    }
+
+    case "list-projects": {
+      const data = await fetchJson("/api/projects");
+      if (!data.projects?.length) {
+        // Also show accounts for context
+        const accts = await fetchJson("/api/accounts");
+        const acctList =
+          accts.accounts
+            ?.map(
+              (a: { email: string; status: string; projectsCount: number }) =>
+                `  ${a.email} (${a.status}, ${a.projectsCount} projects)`,
+            )
+            .join("\n") || "  (none)";
+        return {
+          output: `No projects found.\n\nAuthenticated accounts:\n${acctList}\n\nTip: Projects are discovered from your GCP accounts.\nRun "Enable API" on a project ID to activate it.`,
+          status: "success",
+        };
+      }
+      const lines = data.projects.map(
+        (p: { id: string; name?: string; enabled: boolean; status?: string }) =>
+          `  ${p.id} ${p.enabled ? "✓" : "✗"} ${p.status || ""} ${p.name || ""}`.trimEnd(),
+      );
+      return {
+        output: `Projects (${data.total}):\n${lines.join("\n")}`,
+        status: "success",
+      };
+    }
+
+    case "enable-api": {
+      if (!input)
+        return { output: "Error: project ID required", status: "error" };
+      const data = await fetchJson(
+        `/api/projects/${encodeURIComponent(input)}/enable`,
+        {
+          method: "POST",
+        },
+      );
+      const enabledStatus = data.enabled ? "enabled" : "disabled";
+      return {
+        output: data.message || `API ${enabledStatus} for project: ${input}`,
+        status: "success",
+      };
+    }
+
+    case "test": {
+      if (!input)
+        return { output: "Error: project ID required", status: "error" };
+      const data = await fetchJson(
+        `/api/projects/${encodeURIComponent(input)}/test`,
+        {
+          method: "POST",
+        },
+      );
+      return {
+        output: data.message || JSON.stringify(data, null, 2),
+        status: data.success ? "success" : "error",
+      };
+    }
+
+    case "benchmark": {
+      const data = await fetchJson("/api/bench", { method: "POST" });
+      if (!data.results?.length) {
+        return {
+          output: "No projects available for benchmarking.",
+          status: "success",
+        };
+      }
+      const lines = data.results.map(
+        (r: {
+          projectId: string;
+          latencyMs?: number;
+          success?: boolean;
+          error?: string;
+        }) =>
+          `  ${r.projectId}: ${r.success ? `${r.latencyMs}ms` : `FAIL - ${r.error}`}`,
+      );
+      return {
+        output: `Benchmark results:\n${lines.join("\n")}`,
+        status: "success",
+      };
+    }
+
+    case "probe": {
+      const data = await fetchJson("/api/probe", { method: "POST" });
+      if (!data.results?.length) {
+        return {
+          output: `Probe complete. No enabled projects to test.\nDisabled: ${data.disabledCount || 0}`,
+          status: "success",
+        };
+      }
+      const lines = data.results.map(
+        (r: {
+          projectId: string;
+          reachable?: boolean;
+          latencyMs?: number;
+          error?: string;
+        }) =>
+          `  ${r.projectId}: ${r.reachable ? `OK (${r.latencyMs}ms)` : `UNREACHABLE - ${r.error}`}`,
+      );
+      return {
+        output: `Probe results:\n${lines.join("\n")}`,
+        status: "success",
+      };
+    }
+
+    default:
+      return { output: `Unknown command: ${commandId}`, status: "error" };
+  }
+}
+
 // =============================================================================
 // COMPONENT
 // =============================================================================
@@ -213,6 +381,11 @@ export function CLICommandsPanel({
   const [inputValue, setInputValue] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
 
+  // Project selection state for commands that require a project ID
+  const [projects, setProjects] = useState<ProjectEntry[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -242,52 +415,40 @@ export function CLICommandsPanel({
   const executeCommand = useCallback(
     async (command: CLICommand, input?: string) => {
       const outputId = generateId();
+      const cmdStr = input ? `${command.id} ${input}` : command.id;
 
       // Add pending output
-      const pendingOutput: CommandOutput = {
-        id: outputId,
-        command: input ? `${command.id} ${input}` : command.id,
-        output: "",
-        timestamp: new Date(),
-        status: "pending",
-      };
-
-      setOutputs((prev) => [...prev, pendingOutput]);
+      setOutputs((prev) => [
+        ...prev,
+        {
+          id: outputId,
+          command: cmdStr,
+          output: "",
+          timestamp: new Date(),
+          status: "pending",
+        },
+      ]);
       setIsExecuting(command.id);
 
+      const updateOutput = (output: string, status: "success" | "error") => {
+        setOutputs((prev) =>
+          prev.map((o) => (o.id === outputId ? { ...o, output, status } : o)),
+        );
+      };
+
       try {
+        // Use custom handler if provided, otherwise call real APIs
         if (onExecuteCommand) {
           const result = await onExecuteCommand(command.id, input);
-          setOutputs((prev) =>
-            prev.map((o) =>
-              o.id === outputId
-                ? { ...o, output: result.output, status: result.status }
-                : o,
-            ),
-          );
+          updateOutput(result.output, result.status);
         } else {
-          // Demo mode - simulate command execution
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          const demoOutput = `$ gswarm ${input ? `${command.id} ${input}` : command.id}\n\n[Demo Mode] Command executed successfully.\nThis is a simulated output for demonstration purposes.`;
-          setOutputs((prev) =>
-            prev.map((o) =>
-              o.id === outputId
-                ? { ...o, output: demoOutput, status: "success" }
-                : o,
-            ),
-          );
+          const result = await callApi(command.id, input);
+          updateOutput(result.output, result.status);
         }
       } catch (error) {
-        setOutputs((prev) =>
-          prev.map((o) =>
-            o.id === outputId
-              ? {
-                  ...o,
-                  output: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
-                  status: "error",
-                }
-              : o,
-          ),
+        updateOutput(
+          `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+          "error",
         );
       } finally {
         setIsExecuting(null);
@@ -296,20 +457,58 @@ export function CLICommandsPanel({
     [onExecuteCommand],
   );
 
-  const handleCommandClick = useCallback((command: CLICommand) => {
-    if (command.opensExternal) {
-      window.open(command.opensExternal, "_blank", "noopener,noreferrer");
-      return;
-    }
-
-    if (command.requiresInput) {
-      setCurrentCommand(command);
-      setInputValue("");
-      setInputDialogOpen(true);
-    } else {
-      setCurrentCommand(command);
+  /** Fetch projects list from the API */
+  const fetchProjects = useCallback(async () => {
+    setProjectsLoading(true);
+    setProjectsError(null);
+    try {
+      const res = await fetch("/api/projects", {
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || data.message || `HTTP ${res.status}`);
+      }
+      const fetched: ProjectEntry[] = data.projects ?? [];
+      setProjects(fetched);
+      // Auto-select if only one project
+      if (fetched.length === 1) {
+        setInputValue(fetched[0].id);
+      }
+    } catch (err) {
+      setProjectsError(
+        err instanceof Error ? err.message : "Failed to load projects",
+      );
+    } finally {
+      setProjectsLoading(false);
     }
   }, []);
+
+  const handleCommandClick = useCallback(
+    (command: CLICommand) => {
+      if (command.opensExternal) {
+        window.open(command.opensExternal, "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      if (command.requiresInput) {
+        setCurrentCommand(command);
+        setInputValue("");
+        setProjectsError(null);
+
+        // Fetch projects for project ID selectors
+        if (command.requiresInput.type === "projectId") {
+          fetchProjects();
+        }
+
+        setInputDialogOpen(true);
+      } else {
+        setCurrentCommand(command);
+      }
+    },
+    [fetchProjects],
+  );
 
   // Execute command when currentCommand changes and no input is required
   useEffect(() => {
@@ -499,23 +698,62 @@ export function CLICommandsPanel({
             <DialogDescription>{currentCommand?.description}</DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <Input
-              label={currentCommand?.requiresInput?.label}
-              placeholder={currentCommand?.requiresInput?.placeholder}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  handleInputSubmit();
-                }
-              }}
-            />
+            {currentCommand?.requiresInput?.type === "projectId" ? (
+              // Project ID selector: fetch and display projects as a dropdown
+              projectsLoading ? (
+                <div className="flex items-center gap-2 text-sm text-text-secondary py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Loading projects...</span>
+                </div>
+              ) : projectsError ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-red-400">{projectsError}</p>
+                  <Button variant="ghost" size="sm" onClick={fetchProjects}>
+                    Retry
+                  </Button>
+                </div>
+              ) : projects.length === 0 ? (
+                <p className="text-sm text-text-secondary">
+                  No projects found. Log in with a Google account first, then
+                  try again.
+                </p>
+              ) : (
+                <Select
+                  label={currentCommand.requiresInput.label}
+                  placeholder="Select a project..."
+                  options={projects.map((p) => ({
+                    value: p.id,
+                    label: `${p.name || p.id}${p.apiEnabled ? "" : " (disabled)"}`,
+                  }))}
+                  value={inputValue}
+                  onChange={setInputValue}
+                />
+              )
+            ) : (
+              // Non-project input (e.g. email): show standard text input
+              <Input
+                label={currentCommand?.requiresInput?.label}
+                placeholder={currentCommand?.requiresInput?.placeholder}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleInputSubmit();
+                  }
+                }}
+              />
+            )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setInputDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleInputSubmit} disabled={!inputValue.trim()}>
+            <Button
+              onClick={handleInputSubmit}
+              disabled={
+                !inputValue.trim() || projectsLoading || !!projectsError
+              }
+            >
               Execute
             </Button>
           </DialogFooter>

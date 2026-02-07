@@ -1,7 +1,7 @@
 /**
- * POST /api/gswarm/chat
- *
- * OpenAI-compatible chat completions endpoint.
+ * @file app/api/gswarm/chat/route.ts
+ * @version 1.0
+ * @description OpenAI-compatible chat completions endpoint.
  * Validates API key and IP, then generates content using GSwarm.
  */
 
@@ -14,8 +14,10 @@ import { ApiError } from "@/lib/gswarm/errors";
 import { recordMetric } from "@/lib/gswarm/storage/metrics";
 import type { RequestMetric } from "@/lib/gswarm/types";
 import {
+  addCorsHeaders,
   addRateLimitHeaders,
   authenticateRequest,
+  corsPreflightResponse,
   rateLimitResponse,
   unauthorizedResponse,
 } from "../_shared/auth";
@@ -146,33 +148,39 @@ export async function POST(request: NextRequest) {
 
   // Validate messages array is not empty
   if (!messages.length) {
-    return NextResponse.json(
-      {
-        error: "Validation failed",
-        message: "Messages array cannot be empty",
-      },
-      { status: 400 },
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Validation failed",
+          message: "Messages array cannot be empty",
+        },
+        { status: 400 },
+      ),
     );
   }
 
   // Validate message structure
   for (const msg of messages) {
     if (!msg.role || !msg.content) {
-      return NextResponse.json(
-        {
-          error: "Validation failed",
-          message: "Each message must have 'role' and 'content' fields",
-        },
-        { status: 400 },
+      return addCorsHeaders(
+        NextResponse.json(
+          {
+            error: "Validation failed",
+            message: "Each message must have 'role' and 'content' fields",
+          },
+          { status: 400 },
+        ),
       );
     }
     if (!["user", "assistant", "system"].includes(msg.role)) {
-      return NextResponse.json(
-        {
-          error: "Validation failed",
-          message: "Message role must be 'user', 'assistant', or 'system'",
-        },
-        { status: 400 },
+      return addCorsHeaders(
+        NextResponse.json(
+          {
+            error: "Validation failed",
+            message: "Message role must be 'user', 'assistant', or 'system'",
+          },
+          { status: 400 },
+        ),
       );
     }
   }
@@ -272,6 +280,7 @@ export async function POST(request: NextRequest) {
     };
 
     const jsonResponse = NextResponse.json(response);
+    addCorsHeaders(jsonResponse);
     return addRateLimitHeaders(
       jsonResponse,
       auth.rateLimitRemaining,
@@ -317,4 +326,12 @@ export async function POST(request: NextRequest) {
       rateLimitReset: auth.rateLimitReset,
     });
   }
+}
+
+/**
+ * OPTIONS /api/gswarm/chat
+ * CORS preflight handler
+ */
+export function OPTIONS() {
+  return corsPreflightResponse();
 }

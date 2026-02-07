@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     await session.setState(state);
 
     // Build redirect URI
-    const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/callback`;
+    const redirectUri = `${process.env.GLOBAL_URL}/api/auth/callback`;
 
     // Generate Google OAuth URL
     const authUrl = generateAuthUrl(redirectUri, state);

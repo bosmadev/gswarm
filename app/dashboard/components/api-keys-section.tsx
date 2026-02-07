@@ -73,6 +73,31 @@ interface NewKeyData {
   allowAllIPs: boolean;
 }
 
+interface FormErrors {
+  name?: string;
+  ips?: string;
+}
+
+const IP_V4_PATTERN = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
+
+function validateIPList(ips: string): string | undefined {
+  if (!ips.trim()) return "At least one IP address is required";
+  const items = ips
+    .split(",")
+    .map((ip) => ip.trim())
+    .filter(Boolean);
+  for (const ip of items) {
+    if (!IP_V4_PATTERN.test(ip)) {
+      return `Invalid IP address: ${ip}`;
+    }
+    const octets = ip.split("/")[0].split(".");
+    if (octets.some((o) => Number(o) > 255)) {
+      return `Invalid IP address: ${ip}`;
+    }
+  }
+  return undefined;
+}
+
 function maskKey(key: string): string {
   if (key.length <= 12) return "****";
   const prefix = key.slice(0, 8);
@@ -119,6 +144,7 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
     ips: "",
     allowAllIPs: true,
   });
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
 
   useEffect(() => {
     const loadKeys = async () => {
@@ -139,8 +165,21 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
   }, []);
 
   const handleCreateKey = useCallback(async () => {
-    if (!newKeyData.name.trim()) return;
-
+    const errors: FormErrors = {};
+    if (!newKeyData.name.trim()) {
+      errors.name = "Key name is required";
+    } else if (newKeyData.name.trim().length < 2) {
+      errors.name = "Key name must be at least 2 characters";
+    }
+    if (!newKeyData.allowAllIPs) {
+      const ipError = validateIPList(newKeyData.ips);
+      if (ipError) errors.ips = ipError;
+    }
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+    setFormErrors({});
     setIsCreating(true);
 
     try {
@@ -173,6 +212,7 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
       setCreateDialogOpen(false);
       setShowKeyDialogOpen(true);
       setNewKeyData({ name: "", ips: "", allowAllIPs: true });
+      setFormErrors({});
       success("API key created successfully");
     } catch {
       error("Failed to create API key");
@@ -287,72 +327,75 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
             </Button>
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Key Hash</TableHead>
-                <TableHead>Allowed IPs</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {keys.map((apiKey) => (
-                <TableRow key={apiKey.key_hash}>
-                  <TableCell className="font-medium">{apiKey.name}</TableCell>
-                  <TableCell>
-                    <code className="text-sm bg-bg-tertiary px-2 py-1 rounded font-mono">
-                      {maskKey(apiKey.key_hash)}
-                    </code>
-                  </TableCell>
-                  <TableCell>
-                    <Tooltip
-                      content={
-                        apiKey.allowed_ips && apiKey.allowed_ips.length > 0
-                          ? apiKey.allowed_ips.join(", ")
-                          : "All IPs allowed"
-                      }
-                    >
-                      <span className="text-sm text-text-secondary cursor-help">
-                        {formatIPs(apiKey.allowed_ips)}
-                      </span>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className={cn(
-                        "text-sm px-2 py-1 rounded",
-                        apiKey.is_active
-                          ? "bg-green/10 text-green"
-                          : "bg-red/10 text-red",
-                      )}
-                    >
-                      {apiKey.is_active ? "Active" : "Inactive"}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-text-secondary">
-                    {formatDate(apiKey.created_at)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Tooltip content="Delete key">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-red hover:text-red hover:bg-red/10"
-                          onClick={() => openDeleteDialog(apiKey)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </Tooltip>
-                    </div>
-                  </TableCell>
+          <div className="overflow-x-auto -mx-6 px-6">
+            <Table className="min-w-[600px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Key Hash</TableHead>
+                  <TableHead>Allowed IPs</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {keys.map((apiKey) => (
+                  <TableRow key={apiKey.key_hash}>
+                    <TableCell className="font-medium">{apiKey.name}</TableCell>
+                    <TableCell>
+                      <code className="text-sm bg-bg-tertiary px-2 py-1 rounded font-mono">
+                        {maskKey(apiKey.key_hash)}
+                      </code>
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip
+                        content={
+                          apiKey.allowed_ips && apiKey.allowed_ips.length > 0
+                            ? apiKey.allowed_ips.join(", ")
+                            : "All IPs allowed"
+                        }
+                      >
+                        <span className="text-sm text-text-secondary cursor-help">
+                          {formatIPs(apiKey.allowed_ips)}
+                        </span>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={cn(
+                          "text-sm px-2 py-1 rounded",
+                          apiKey.is_active
+                            ? "bg-green/10 text-green"
+                            : "bg-red-500/10 text-red-500",
+                        )}
+                      >
+                        {apiKey.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-text-secondary">
+                      {formatDate(apiKey.created_at)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Tooltip content="Delete key">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-red-500 hover:text-red-500 hover:bg-red-500/10"
+                            onClick={() => openDeleteDialog(apiKey)}
+                            aria-label="Delete key"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </Tooltip>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </CardContent>
 
@@ -370,10 +413,17 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
               label="Key Name"
               placeholder="My API Key"
               value={newKeyData.name}
-              onChange={(e) =>
-                setNewKeyData((prev) => ({ ...prev, name: e.target.value }))
+              onChange={(e) => {
+                setNewKeyData((prev) => ({ ...prev, name: e.target.value }));
+                if (formErrors.name)
+                  setFormErrors((prev) => ({ ...prev, name: undefined }));
+              }}
+              error={formErrors.name}
+              helperText={
+                formErrors.name
+                  ? undefined
+                  : "A descriptive name to identify this key"
               }
-              helperText="A descriptive name to identify this key"
             />
             <div className="space-y-3">
               <Checkbox
@@ -392,10 +442,17 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
                   label="Allowed IP Addresses"
                   placeholder="192.168.1.1, 10.0.0.1"
                   value={newKeyData.ips}
-                  onChange={(e) =>
-                    setNewKeyData((prev) => ({ ...prev, ips: e.target.value }))
+                  onChange={(e) => {
+                    setNewKeyData((prev) => ({ ...prev, ips: e.target.value }));
+                    if (formErrors.ips)
+                      setFormErrors((prev) => ({ ...prev, ips: undefined }));
+                  }}
+                  error={formErrors.ips}
+                  helperText={
+                    formErrors.ips
+                      ? undefined
+                      : "Comma-separated list of IP addresses"
                   }
-                  helperText="Comma-separated list of IP addresses"
                 />
               )}
             </div>
@@ -440,6 +497,7 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
                   <Button
                     variant="secondary"
                     size="icon"
+                    aria-label="Copy key"
                     onClick={() => {
                       if (newlyCreatedKey) {
                         copyKey(
@@ -479,7 +537,7 @@ export function APIKeysSection({ className }: APIKeysSectionProps) {
             <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteKey}
-              className="bg-red hover:bg-red/90"
+              className="bg-red-500 hover:bg-red-500/90"
               disabled={isDeleting}
             >
               {isDeleting ? "Deleting..." : "Delete Key"}

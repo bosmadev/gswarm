@@ -1,5 +1,6 @@
 /**
  * @file app/api/accounts/route.ts
+ * @version 1.0
  * @description Admin API route for listing all accounts/tokens.
  * Returns sanitized account list without exposing actual token values.
  *
@@ -52,7 +53,7 @@ interface ProjectsStorage {
  */
 export async function GET(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },

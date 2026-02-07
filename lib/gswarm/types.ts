@@ -146,6 +146,12 @@ export interface StoredToken extends TokenData {
   /** Unix timestamp (seconds) when token was created/saved */
   created_at: number;
 
+  /** Client that created this token (e.g., "gemini-cli", "pulsona") */
+  client?: string;
+
+  /** GCP project IDs this token has access to */
+  projects?: string[];
+
   /** Whether this token is marked as invalid */
   is_invalid?: boolean;
 
@@ -157,6 +163,9 @@ export interface StoredToken extends TokenData {
 
   /** Last successful use timestamp */
   last_used_at?: number;
+
+  /** Unix timestamp (seconds) when token was last updated */
+  updated_at?: number;
 }
 
 /**
@@ -346,8 +355,11 @@ export interface GSwarmConfig {
  * API key configuration
  */
 export interface ApiKeyConfig {
-  /** SHA256 hash of the API key */
+  /** HMAC-SHA256 hash of the API key (salted for new keys, plain SHA256 for legacy) */
   key_hash: string;
+
+  /** Per-key salt for HMAC-SHA256 (absent on legacy keys using plain SHA256) */
+  key_salt?: string;
 
   /** Human-readable name for the key */
   name: string;
@@ -466,7 +478,7 @@ export interface ServiceUsageResponse {
 
 /**
  * GSwarm connection status
- * Source: pulsona/lib/gswarm.ts lines 363-369
+ * Source: gswarm/lib/gswarm.ts lines 363-369
  *
  * - connected: All projects available
  * - degraded-routed: Some 429'd but request succeeded on fallback
@@ -485,7 +497,7 @@ export type GSwarmStatus =
 
 /**
  * Per-account status tracking
- * Source: pulsona/lib/gswarm.ts lines 374-381
+ * Source: gswarm/lib/gswarm.ts lines 374-381
  */
 export interface AccountStatus {
   email: string;
@@ -540,8 +552,11 @@ export interface ContentPart {
 /**
  * GSwarm API request body format
  */
-export interface GSwarmRequest {
-  model: string;
+/**
+ * Inner request payload (contents, config, tools).
+ * Nested under `request` in the top-level GSwarmRequest.
+ */
+export interface GSwarmRequestInner {
   contents: Array<{
     role: string;
     parts: ContentPart[];
@@ -553,6 +568,16 @@ export interface GSwarmRequest {
   tools?: Array<{
     googleSearch?: Record<string, unknown>;
   }>;
+}
+
+/**
+ * Top-level request body sent to cloudcode-pa.googleapis.com/v1internal:generateContent.
+ * Matches the format used by gemini-cli / pulsona.
+ */
+export interface GSwarmRequest {
+  model: string;
+  request: GSwarmRequestInner;
+  project: string;
 }
 
 /**

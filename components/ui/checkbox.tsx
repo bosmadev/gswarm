@@ -85,7 +85,7 @@ const Checkbox = React.forwardRef<
           "peer shrink-0 rounded-sm border-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200",
           sizeClasses[size],
           error
-            ? "border-red"
+            ? "border-red-500"
             : "border-border data-[state=checked]:bg-orange data-[state=checked]:border-orange data-[state=indeterminate]:bg-orange data-[state=indeterminate]:border-orange hover:border-orange",
           className,
         )}
@@ -126,7 +126,7 @@ const Checkbox = React.forwardRef<
             <p className="text-xs text-text-secondary mt-0.5">{description}</p>
           )}
           {error && (
-            <p className="text-xs text-red mt-1" role="alert">
+            <p className="text-xs text-red-500 mt-1" role="alert">
               {error}
             </p>
           )}

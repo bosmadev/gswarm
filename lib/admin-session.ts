@@ -4,10 +4,18 @@
  * Handles session validation, storage, and cookie management for admin authentication.
  *
  * @module lib/admin-session
+ *
+ * @security Session file is NOT encrypted at rest.
+ * The session file is stored at `data/admin-sessions.json` which is inside the
+ * `data/` directory. This directory is NOT served by Next.js (only `public/` is
+ * web-accessible), so the file cannot be fetched via HTTP. The `data/` directory
+ * is also excluded from git via `.gitignore`. For deployments with stricter
+ * requirements, consider encrypting the file or switching to an in-memory or
+ * database-backed session store.
  */
 
 import crypto from "node:crypto";
-import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import type { NextRequest } from "next/server";
 
@@ -47,13 +55,17 @@ const SESSIONS_FILE_PATH = path.join(
 /**
  * Ensures the data directory and sessions file exist
  */
-function ensureSessionsFile(): void {
+async function ensureSessionsFile(): Promise<void> {
   const dataDir = path.dirname(SESSIONS_FILE_PATH);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+  try {
+    await fsPromises.access(dataDir);
+  } catch {
+    await fsPromises.mkdir(dataDir, { recursive: true });
   }
-  if (!fs.existsSync(SESSIONS_FILE_PATH)) {
-    fs.writeFileSync(
+  try {
+    await fsPromises.access(SESSIONS_FILE_PATH);
+  } catch {
+    await fsPromises.writeFile(
       SESSIONS_FILE_PATH,
       JSON.stringify({ sessions: [] }, null, 2),
     );
@@ -63,10 +75,10 @@ function ensureSessionsFile(): void {
 /**
  * Reads all sessions from storage
  */
-export function readSessions(): SessionStorage {
-  ensureSessionsFile();
+export async function readSessions(): Promise<SessionStorage> {
+  await ensureSessionsFile();
   try {
-    const data = fs.readFileSync(SESSIONS_FILE_PATH, "utf-8");
+    const data = await fsPromises.readFile(SESSIONS_FILE_PATH, "utf-8");
     return JSON.parse(data) as SessionStorage;
   } catch {
     return { sessions: [] };
@@ -76,9 +88,12 @@ export function readSessions(): SessionStorage {
 /**
  * Writes sessions to storage
  */
-export function writeSessions(storage: SessionStorage): void {
-  ensureSessionsFile();
-  fs.writeFileSync(SESSIONS_FILE_PATH, JSON.stringify(storage, null, 2));
+export async function writeSessions(storage: SessionStorage): Promise<void> {
+  await ensureSessionsFile();
+  await fsPromises.writeFile(
+    SESSIONS_FILE_PATH,
+    JSON.stringify(storage, null, 2),
+  );
 }
 
 /**
@@ -91,7 +106,7 @@ export function generateSessionToken(): string {
 /**
  * Creates a new session and stores it
  */
-export function createSession(user: string): AdminSession {
+export async function createSession(user: string): Promise<AdminSession> {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_EXPIRY_MS);
 
@@ -102,7 +117,7 @@ export function createSession(user: string): AdminSession {
     expiresAt: expiresAt.toISOString(),
   };
 
-  const storage = readSessions();
+  const storage = await readSessions();
 
   // Clean up expired sessions
   storage.sessions = storage.sessions.filter(
@@ -111,7 +126,7 @@ export function createSession(user: string): AdminSession {
 
   // Add new session
   storage.sessions.push(session);
-  writeSessions(storage);
+  await writeSessions(storage);
 
   return session;
 }
@@ -119,13 +134,13 @@ export function createSession(user: string): AdminSession {
 /**
  * Removes a session by ID
  */
-export function removeSession(sessionId: string): boolean {
-  const storage = readSessions();
+export async function removeSession(sessionId: string): Promise<boolean> {
+  const storage = await readSessions();
   const initialLength = storage.sessions.length;
   storage.sessions = storage.sessions.filter((s) => s.id !== sessionId);
 
   if (storage.sessions.length < initialLength) {
-    writeSessions(storage);
+    await writeSessions(storage);
     return true;
   }
   return false;
@@ -134,13 +149,32 @@ export function removeSession(sessionId: string): boolean {
 /**
  * Finds a session by ID
  */
-export function findSession(sessionId: string): AdminSession | undefined {
-  const storage = readSessions();
+export async function findSession(
+  sessionId: string,
+): Promise<AdminSession | undefined> {
+  const storage = await readSessions();
   return storage.sessions.find((s) => s.id === sessionId);
 }
 
 /**
- * Validates admin credentials against environment variables
+ * Timing-safe string comparison to prevent timing attacks.
+ */
+function safeCompare(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, "utf-8");
+  const bBuf = Buffer.from(b, "utf-8");
+
+  if (aBuf.length !== bBuf.length) {
+    // Consume constant time even on length mismatch
+    crypto.timingSafeEqual(bBuf, bBuf);
+    return false;
+  }
+
+  return crypto.timingSafeEqual(aBuf, bBuf);
+}
+
+/**
+ * Validates admin credentials against environment variables.
+ * Uses timing-safe comparison to prevent timing attacks.
  */
 export function validateCredentials(
   username: string,
@@ -153,8 +187,8 @@ export function validateCredentials(
   if (
     adminUsername &&
     adminPassword &&
-    username === adminUsername &&
-    password === adminPassword
+    safeCompare(username, adminUsername) &&
+    safeCompare(password, adminPassword)
   ) {
     return { valid: true, user: username };
   }
@@ -165,7 +199,12 @@ export function validateCredentials(
     const users = dashboardUsers.split(",");
     for (const userEntry of users) {
       const [user, pass] = userEntry.split(":");
-      if (user && pass && username === user && password === pass) {
+      if (
+        user &&
+        pass &&
+        safeCompare(username, user) &&
+        safeCompare(password, pass)
+      ) {
         return { valid: true, user: username };
       }
     }
@@ -177,16 +216,16 @@ export function validateCredentials(
 /**
  * Validates an admin session from a request
  */
-export function validateAdminSession(
+export async function validateAdminSession(
   request: NextRequest,
-): SessionValidationResult {
+): Promise<SessionValidationResult> {
   const sessionCookie = request.cookies.get(ADMIN_SESSION_COOKIE);
 
   if (!sessionCookie?.value) {
     return { valid: false, error: "No session cookie found" };
   }
 
-  const session = findSession(sessionCookie.value);
+  const session = await findSession(sessionCookie.value);
 
   if (!session) {
     return { valid: false, error: "Session not found" };
@@ -197,7 +236,7 @@ export function validateAdminSession(
 
   if (expiresAt <= now) {
     // Clean up expired session
-    removeSession(session.id);
+    await removeSession(session.id);
     return { valid: false, error: "Session expired" };
   }
 

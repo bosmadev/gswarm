@@ -1,5 +1,6 @@
 /**
  * @file app/api/gswarm/config/route.ts
+ * @version 1.0
  * @description GSwarm configuration API endpoint
  * GET /api/gswarm/config - Get current configuration
  * POST /api/gswarm/config - Update configuration
@@ -7,9 +8,12 @@
 
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { safeParseBody } from "@/lib/api-validation";
+import { PREFIX, consoleError } from "@/lib/console";
 import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 import { loadConfig, updateConfig } from "@/lib/gswarm/storage/config";
 import type { GSwarmConfig } from "@/lib/gswarm/types";
+import { addCorsHeaders, corsPreflightResponse } from "../_shared/auth";
 
 /**
  * Extract API key from Authorization header
@@ -41,9 +45,14 @@ export async function GET(request: NextRequest) {
   // Extract and validate API key
   const apiKey = extractApiKey(request);
   if (!apiKey) {
-    return NextResponse.json(
-      { success: false, error: "Missing API key" },
-      { status: 401 },
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Unauthorized",
+          message: "Missing API key in Authorization header",
+        },
+        { status: 401 },
+      ),
     );
   }
 
@@ -55,32 +64,54 @@ export async function GET(request: NextRequest) {
   );
 
   if (!validationResult.valid) {
-    return NextResponse.json(
-      { success: false, error: validationResult.error },
-      { status: validationResult.error === "Rate limit exceeded" ? 429 : 401 },
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error:
+            validationResult.error === "Rate limit exceeded"
+              ? "Rate limit exceeded"
+              : "Unauthorized",
+          message: validationResult.error,
+        },
+        {
+          status: validationResult.error === "Rate limit exceeded" ? 429 : 401,
+        },
+      ),
     );
   }
 
   try {
     const configResult = await loadConfig();
     if (!configResult.success) {
-      return NextResponse.json(
-        { success: false, error: configResult.error },
-        { status: 500 },
+      return addCorsHeaders(
+        NextResponse.json(
+          {
+            error: "Failed to load configuration",
+            message: configResult.error,
+          },
+          { status: 500 },
+        ),
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      config: configResult.data,
-    });
+    return addCorsHeaders(
+      NextResponse.json({
+        config: configResult.data,
+      }),
+    );
   } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
+    consoleError(
+      PREFIX.ERROR,
+      `[API] GET /api/gswarm/config failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Internal server error",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+        { status: 500 },
+      ),
     );
   }
 }
@@ -93,9 +124,14 @@ export async function POST(request: NextRequest) {
   // Extract and validate API key
   const apiKey = extractApiKey(request);
   if (!apiKey) {
-    return NextResponse.json(
-      { success: false, error: "Missing API key" },
-      { status: 401 },
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Unauthorized",
+          message: "Missing API key in Authorization header",
+        },
+        { status: 401 },
+      ),
     );
   }
 
@@ -107,65 +143,103 @@ export async function POST(request: NextRequest) {
   );
 
   if (!validationResult.valid) {
-    return NextResponse.json(
-      { success: false, error: validationResult.error },
-      { status: validationResult.error === "Rate limit exceeded" ? 429 : 401 },
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error:
+            validationResult.error === "Rate limit exceeded"
+              ? "Rate limit exceeded"
+              : "Unauthorized",
+          message: validationResult.error,
+        },
+        {
+          status: validationResult.error === "Rate limit exceeded" ? 429 : 401,
+        },
+      ),
     );
   }
 
-  // Parse request body
-  let updates: Partial<GSwarmConfig>;
-  try {
-    updates = (await request.json()) as Partial<GSwarmConfig>;
-  } catch {
-    return NextResponse.json(
-      { success: false, error: "Invalid JSON body" },
-      { status: 400 },
+  // Parse request body safely
+  const parseResult = await safeParseBody<Partial<GSwarmConfig>>(request);
+  if (!parseResult.success) {
+    return addCorsHeaders(
+      NextResponse.json(
+        { error: "Invalid request body", message: parseResult.error },
+        { status: 400 },
+      ),
     );
   }
+
+  const updates = parseResult.data;
 
   // Validate updates (basic validation)
-  if (
-    typeof updates !== "object" ||
-    updates === null ||
-    Array.isArray(updates)
-  ) {
-    return NextResponse.json(
-      { success: false, error: "Updates must be an object" },
-      { status: 400 },
+  if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Invalid request body",
+          message: "Updates must be a JSON object",
+        },
+        { status: 400 },
+      ),
     );
   }
 
   try {
     const updateResult = await updateConfig(updates);
     if (!updateResult.success) {
-      return NextResponse.json(
-        { success: false, error: updateResult.error },
-        { status: 500 },
+      return addCorsHeaders(
+        NextResponse.json(
+          {
+            error: "Failed to update configuration",
+            message: updateResult.error,
+          },
+          { status: 500 },
+        ),
       );
     }
 
     // Return updated config
     const configResult = await loadConfig();
     if (!configResult.success) {
-      return NextResponse.json(
-        { success: false, error: configResult.error },
-        { status: 500 },
+      return addCorsHeaders(
+        NextResponse.json(
+          {
+            error: "Failed to load configuration",
+            message: configResult.error,
+          },
+          { status: 500 },
+        ),
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      message: "Configuration updated successfully",
-      config: configResult.data,
-    });
+    return addCorsHeaders(
+      NextResponse.json({
+        message: "Configuration updated successfully",
+        config: configResult.data,
+      }),
+    );
   } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
+    consoleError(
+      PREFIX.ERROR,
+      `[API] POST /api/gswarm/config failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Internal server error",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+        { status: 500 },
+      ),
     );
   }
+}
+
+/**
+ * OPTIONS /api/gswarm/config
+ * CORS preflight handler
+ */
+export function OPTIONS() {
+  return corsPreflightResponse();
 }

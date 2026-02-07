@@ -138,7 +138,7 @@ function AccountRow({ account, onLogout, isLoggingOut }: AccountRowProps) {
       <TableCell className="text-center">{account.projectsCount}</TableCell>
       <TableCell className="text-center">
         {account.failedCount > 0 ? (
-          <span className="text-red">{account.failedCount}</span>
+          <span className="text-red-500">{account.failedCount}</span>
         ) : (
           account.failedCount
         )}
@@ -198,13 +198,25 @@ export function AccountsSection() {
     "/api/accounts",
     fetcher,
     {
-      refreshInterval: 30000, // Refresh every 30 seconds
-      revalidateOnFocus: true,
+      refreshInterval: 60000, // Refresh every 60 seconds
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
     },
   );
 
-  const handleLogin = async () => {
-    // Open OAuth flow in a new window
+  // Listen for OAuth popup completion and refresh accounts list
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.success) {
+        mutate(); // Refresh accounts list
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [mutate]);
+
+  const handleLogin = () => {
     window.open(
       "/api/auth/google",
       "google-oauth",
@@ -280,7 +292,7 @@ export function AccountsSection() {
       <CardContent>
         {error ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
-            <p className="text-sm text-red mb-4">
+            <p className="text-sm text-red-500 mb-4">
               Failed to load accounts. Please try again.
             </p>
             <Button variant="secondary" onClick={handleRefresh}>

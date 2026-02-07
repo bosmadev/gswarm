@@ -12,14 +12,20 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Loader2,
   PlayCircle,
+  Power,
+  PowerOff,
   RefreshCw,
   Search,
+  XCircle,
 } from "lucide-react";
 import * as React from "react";
 import useSWR from "swr";
+import { useNotifications } from "@/components/providers/notification-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,7 +38,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -226,9 +231,11 @@ function SortableHeader({
 // PROJECT ROW
 // =============================================================================
 
+type TestResult = "idle" | "success" | "error";
+
 interface ProjectRowProps {
   project: Project;
-  onTest: (projectId: string) => Promise<void>;
+  onTest: (projectId: string) => Promise<boolean>;
   onToggle: (projectId: string, enabled: boolean) => Promise<void>;
   isTestingId: string | null;
   isTogglingId: string | null;
@@ -243,14 +250,49 @@ function ProjectRow({
 }: ProjectRowProps) {
   const isTesting = isTestingId === project.id;
   const isToggling = isTogglingId === project.id;
+  const [testResult, setTestResult] = React.useState<TestResult>("idle");
 
-  const handleTest = () => {
-    onTest(project.id);
+  const isEnabled = project.status !== "disabled";
+
+  const handleTest = async () => {
+    setTestResult("idle");
+    const success = await onTest(project.id);
+    setTestResult(success ? "success" : "error");
+    // Reset the result icon after 3 seconds
+    setTimeout(() => setTestResult("idle"), 3000);
   };
 
-  const handleToggle = (checked: boolean) => {
-    onToggle(project.id, checked);
+  const handleToggle = () => {
+    onToggle(project.id, !isEnabled);
   };
+
+  // Determine the test button icon based on state
+  const testIcon = React.useMemo(() => {
+    if (isTesting) {
+      return <Loader2 className="h-4 w-4 animate-spin" />;
+    }
+    if (testResult === "success") {
+      return <CheckCircle2 className="h-4 w-4" />;
+    }
+    if (testResult === "error") {
+      return <XCircle className="h-4 w-4" />;
+    }
+    return <PlayCircle className="h-4 w-4" />;
+  }, [isTesting, testResult]);
+
+  // Test button class based on state
+  const testButtonClass = React.useMemo(() => {
+    if (testResult === "success") {
+      return "bg-green-600 text-white hover:bg-green-700";
+    }
+    if (testResult === "error") {
+      return "bg-red-600 text-white hover:bg-red-700";
+    }
+    if (!project.apiEnabled) {
+      return "opacity-40 cursor-not-allowed";
+    }
+    return "bg-green-600/15 text-green-500 hover:bg-green-600/25 hover:text-green-400";
+  }, [testResult, project.apiEnabled]);
 
   return (
     <TableRow>
@@ -278,7 +320,7 @@ function ProjectRow({
       </TableCell>
       <TableCell className="text-center">
         {project.errorCount > 0 ? (
-          <span className="text-red">{project.errorCount}</span>
+          <span className="text-red-500">{project.errorCount}</span>
         ) : (
           project.errorCount
         )}
@@ -287,29 +329,75 @@ function ProjectRow({
         {formatRelativeTime(project.lastUsed)}
       </TableCell>
       <TableCell>
-        <div className="flex items-center justify-end gap-3">
-          <Tooltip content="Test project API">
+        <div className="flex items-center justify-end gap-2">
+          {/* Test Button - green-themed with state feedback */}
+          <Tooltip
+            content={
+              !project.apiEnabled
+                ? "Enable API first to test"
+                : testResult === "success"
+                  ? "Test passed"
+                  : testResult === "error"
+                    ? "Test failed"
+                    : "Run API test for this project"
+            }
+          >
             <Button
               variant="ghost"
               size="sm"
               onClick={handleTest}
               disabled={isTesting || !project.apiEnabled}
-              loading={isTesting}
-              icon={<PlayCircle className="h-4 w-4" />}
+              className={testButtonClass}
+              icon={testIcon}
             >
-              Test
+              {testResult === "success"
+                ? "Passed"
+                : testResult === "error"
+                  ? "Failed"
+                  : "Test"}
             </Button>
           </Tooltip>
-          <Tooltip
-            content={project.status === "disabled" ? "Enable" : "Disable"}
-          >
-            <Switch
-              checked={project.status !== "disabled"}
-              onCheckedChange={handleToggle}
-              disabled={isToggling}
-              aria-label={`Toggle project ${project.name}`}
-            />
-          </Tooltip>
+
+          {/* Enable/Disable Toggle - colored badge + action button */}
+          {isEnabled ? (
+            <Tooltip content="Disable this project">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleToggle}
+                disabled={isToggling}
+                className="bg-orange/15 text-orange hover:bg-red-600/25 hover:text-red-400 transition-colors"
+                icon={
+                  isToggling ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <PowerOff className="h-4 w-4" />
+                  )
+                }
+              >
+                Disable
+              </Button>
+            </Tooltip>
+          ) : (
+            <Tooltip content="Enable this project">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleToggle}
+                disabled={isToggling}
+                className="bg-blue-600/15 text-blue-400 hover:bg-blue-600/25 hover:text-blue-300 transition-colors"
+                icon={
+                  isToggling ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Power className="h-4 w-4" />
+                  )
+                }
+              >
+                Enable
+              </Button>
+            </Tooltip>
+          )}
         </div>
       </TableCell>
     </TableRow>
@@ -412,6 +500,7 @@ export function ProjectsTable() {
   const [page, setPage] = React.useState(1);
   const [testingId, setTestingId] = React.useState<string | null>(null);
   const [togglingId, setTogglingId] = React.useState<string | null>(null);
+  const notifications = useNotifications();
 
   // Build query params
   const queryParams = new URLSearchParams({
@@ -427,8 +516,9 @@ export function ProjectsTable() {
     `/api/projects?${queryParams.toString()}`,
     fetcher,
     {
-      refreshInterval: 15000, // Refresh every 15 seconds
-      revalidateOnFocus: true,
+      refreshInterval: 60000, // Refresh every 60 seconds
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
     },
   );
 
@@ -467,18 +557,24 @@ export function ProjectsTable() {
     setPage(1);
   };
 
-  const handleTest = async (projectId: string) => {
+  const handleTest = async (projectId: string): Promise<boolean> => {
     setTestingId(projectId);
     try {
       const response = await fetch(`/api/projects/${projectId}/test`, {
         method: "POST",
       });
       if (!response.ok) {
-        throw new Error("Test failed");
+        const body = await response.text().catch(() => "");
+        throw new Error(body || "Test failed");
       }
       await mutate();
-    } catch (_err) {
-      // Error handling - could integrate with notification system
+      notifications.success(`Project ${projectId} test passed`);
+      return true;
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Test failed unexpectedly";
+      notifications.error(`Test failed for ${projectId}: ${message}`);
+      return false;
     } finally {
       setTestingId(null);
     }
@@ -493,11 +589,19 @@ export function ProjectsTable() {
         body: JSON.stringify({ enabled }),
       });
       if (!response.ok) {
-        throw new Error("Toggle failed");
+        const body = await response.text().catch(() => "");
+        throw new Error(body || "Toggle failed");
       }
       await mutate();
-    } catch (_err) {
-      // Error handling - could integrate with notification system
+      notifications.success(
+        `Project ${projectId} ${enabled ? "enabled" : "disabled"}`,
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Toggle failed unexpectedly";
+      notifications.error(
+        `Failed to ${enabled ? "enable" : "disable"} ${projectId}: ${message}`,
+      );
     } finally {
       setTogglingId(null);
     }
@@ -557,7 +661,7 @@ export function ProjectsTable() {
       <CardContent>
         {error ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
-            <p className="text-sm text-red mb-4">
+            <p className="text-sm text-red-500 mb-4">
               Failed to load projects. Please try again.
             </p>
             <Button variant="secondary" onClick={handleRefresh}>

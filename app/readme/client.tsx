@@ -5,6 +5,12 @@
  *
  * Renders the README content with GitHub-style dark theme,
  * Mermaid diagrams, syntax highlighting, and floating TOC.
+ *
+ * Performance optimizations:
+ * - ReactMarkdown loaded via next/dynamic (deferred ~50KB)
+ * - remarkGfm and rehypeRaw lazy-loaded as plugins
+ * - Shiki highlighter cached across all CodeBlock instances
+ * - Mermaid instance cached and re-used across all diagrams
  */
 
 import {
@@ -17,12 +23,10 @@ import {
   Plus,
   RotateCcw,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 import type { Components } from "react-markdown";
-import ReactMarkdown from "react-markdown";
-import rehypeRaw from "rehype-raw";
-import remarkGfm from "remark-gfm";
 import SharedLayout from "@/app/shared";
 import { useTheme } from "@/components/providers";
 import {
@@ -38,6 +42,81 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+
+// =============================================================================
+// Lazy-loaded ReactMarkdown (defers ~50KB from initial bundle)
+// =============================================================================
+
+const ReactMarkdown = dynamic(
+  () => import("react-markdown").then((m) => m.default),
+  {
+    loading: () => (
+      <div className="animate-pulse space-y-4">
+        <div className="h-4 bg-bg-tertiary rounded w-3/4" />
+        <div className="h-4 bg-bg-tertiary rounded w-full" />
+        <div className="h-4 bg-bg-tertiary rounded w-1/2" />
+      </div>
+    ),
+    ssr: false,
+  },
+);
+
+// =============================================================================
+// Cached Shiki Highlighter (created once, reused across all CodeBlock instances)
+// =============================================================================
+
+let cachedCodeToHtml: typeof import("shiki").codeToHtml | null = null;
+
+async function getCodeToHtml() {
+  if (!cachedCodeToHtml) {
+    const { codeToHtml } = await import("shiki");
+    cachedCodeToHtml = codeToHtml;
+  }
+  return cachedCodeToHtml;
+}
+
+// =============================================================================
+// Cached Mermaid Instance (initialized once, reused across all diagrams)
+// =============================================================================
+
+let cachedMermaid: typeof import("mermaid").default | null = null;
+let cachedMermaidTheme: string | null = null;
+
+async function getMermaid(theme: string) {
+  const isDark = theme === "dark" || theme === "system";
+  const themeKey = isDark ? "dark" : "light";
+
+  if (!cachedMermaid || cachedMermaidTheme !== themeKey) {
+    const { default: mermaid } = await import("mermaid");
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: isDark ? "dark" : "default",
+      themeVariables: isDark
+        ? {
+            primaryColor: "#64748b",
+            primaryTextColor: "#eaecef",
+            primaryBorderColor: "#2b3139",
+            lineColor: "#848e9c",
+            secondaryColor: "#1e2329",
+            tertiaryColor: "#2b3139",
+            background: "#0b0e11",
+            mainBkg: "#1e2329",
+            nodeBorder: "#2b3139",
+            clusterBkg: "#1e2329",
+            clusterBorder: "#2b3139",
+            titleColor: "#eaecef",
+            edgeLabelBackground: "#1e2329",
+          }
+        : undefined,
+      securityLevel: "loose",
+      fontFamily: "ui-sans-serif, system-ui, sans-serif",
+    });
+    cachedMermaid = mermaid;
+    cachedMermaidTheme = themeKey;
+  }
+
+  return cachedMermaid;
+}
 
 // =============================================================================
 // SafeHtml Component - Renders sanitized HTML from trusted sources
@@ -56,7 +135,7 @@ function SafeHtml({ html, className }: { html: string; className?: string }) {
 }
 
 // =============================================================================
-// CodeBlock Component - Shiki Syntax Highlighting
+// CodeBlock Component - Shiki Syntax Highlighting (cached)
 // =============================================================================
 
 function CodeBlock({
@@ -78,7 +157,7 @@ function CodeBlock({
     const highlightCode = async () => {
       try {
         setIsLoading(true);
-        const { codeToHtml } = await import("shiki");
+        const codeToHtml = await getCodeToHtml();
         const html = await codeToHtml(code, {
           lang: language || "text",
           theme: "github-dark",
@@ -154,7 +233,7 @@ function CodeBlock({
 }
 
 // =============================================================================
-// MermaidRenderer Component - Mermaid Diagrams with Zoom Modal
+// MermaidRenderer Component - Mermaid Diagrams with Zoom Modal (cached)
 // =============================================================================
 
 function MermaidRenderer({
@@ -179,31 +258,7 @@ function MermaidRenderer({
       try {
         setIsLoading(true);
         setError(null);
-        const mermaid = (await import("mermaid")).default;
-        const isDark = theme === "dark" || theme === "system";
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: isDark ? "dark" : "default",
-          themeVariables: isDark
-            ? {
-                primaryColor: "#64748b",
-                primaryTextColor: "#eaecef",
-                primaryBorderColor: "#2b3139",
-                lineColor: "#848e9c",
-                secondaryColor: "#1e2329",
-                tertiaryColor: "#2b3139",
-                background: "#0b0e11",
-                mainBkg: "#1e2329",
-                nodeBorder: "#2b3139",
-                clusterBkg: "#1e2329",
-                clusterBorder: "#2b3139",
-                titleColor: "#eaecef",
-                edgeLabelBackground: "#1e2329",
-              }
-            : undefined,
-          securityLevel: "loose",
-          fontFamily: "ui-sans-serif, system-ui, sans-serif",
-        });
+        const mermaid = await getMermaid(theme);
 
         const { svg: renderedSvg } = await mermaid.render(
           `mermaid-${uniqueId}`,
@@ -685,9 +740,23 @@ interface ReadmePageClientProps {
 
 export function ReadmePageClient({ content }: ReadmePageClientProps) {
   const [isClient, setIsClient] = useState(false);
+  const [plugins, setPlugins] = useState<{
+    remarkGfm?: typeof import("remark-gfm").default;
+    rehypeRaw?: typeof import("rehype-raw").default;
+  }>({});
 
   useEffect(() => {
     setIsClient(true);
+  }, []);
+
+  // Lazy-load markdown plugins in parallel
+  useEffect(() => {
+    Promise.all([
+      import("remark-gfm").then((m) => m.default),
+      import("rehype-raw").then((m) => m.default),
+    ]).then(([gfm, raw]) => {
+      setPlugins({ remarkGfm: gfm, rehypeRaw: raw });
+    });
   }, []);
 
   return (
@@ -728,8 +797,8 @@ export function ReadmePageClient({ content }: ReadmePageClientProps) {
           ) : (
             <div className="github-markdown">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw]}
+                remarkPlugins={plugins.remarkGfm ? [plugins.remarkGfm] : []}
+                rehypePlugins={plugins.rehypeRaw ? [plugins.rehypeRaw] : []}
                 components={markdownComponents}
               >
                 {content}

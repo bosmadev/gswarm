@@ -242,7 +242,7 @@ function Select({
           id={uniqueId}
           className={cn(
             sizeClasses[size],
-            error && "border-red focus:ring-red",
+            error && "border-red-500 focus:ring-red",
             className,
           )}
         >
@@ -266,7 +266,7 @@ function Select({
         <p
           className={cn(
             "text-xs mt-1.5",
-            error ? "text-red" : "text-text-secondary",
+            error ? "text-red-500" : "text-text-secondary",
           )}
         >
           {error || helperText}

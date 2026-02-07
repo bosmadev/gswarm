@@ -4,7 +4,7 @@
  * Web-based Google OAuth 2.0 implementation for authentication.
  * Handles authorization URL generation, token exchange, refresh, and revocation.
  *
- * Based on pulsona's OAuth flow, adapted for web-based authentication
+ * Based on GSwarm's OAuth flow, adapted for web-based authentication
  * where the callback is handled by /api/auth/callback.
  */
 
@@ -16,49 +16,20 @@ import type { GoogleUserInfo, OAuthError, TokenData } from "./types";
 // =============================================================================
 
 /**
- * Google OAuth 2.0 Client ID
- *
- * Required environment variable: GOOGLE_CLIENT_ID
- * Obtain from Google Cloud Console: https://console.cloud.google.com/apis/credentials
+ * OAuth credentials extracted from gemini-cli source.
+ * These are public credentials embedded in the open-source gemini-cli.
+ * @see https://github.com/google-gemini/gemini-cli
  */
+const CLIENT_ID =
+  "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+const CLIENT_SECRET = "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";
+
 function getClientId(): string {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error(
-        "GOOGLE_CLIENT_ID environment variable is required in production",
-      );
-    }
-    consoleError(
-      PREFIX.ERROR,
-      "GOOGLE_CLIENT_ID not set - OAuth will not work",
-    );
-    return "";
-  }
-  return clientId;
+  return CLIENT_ID;
 }
 
-/**
- * Google OAuth 2.0 Client Secret
- *
- * Required environment variable: GOOGLE_CLIENT_SECRET
- * Obtain from Google Cloud Console: https://console.cloud.google.com/apis/credentials
- */
 function getClientSecret(): string {
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientSecret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error(
-        "GOOGLE_CLIENT_SECRET environment variable is required in production",
-      );
-    }
-    consoleError(
-      PREFIX.ERROR,
-      "GOOGLE_CLIENT_SECRET not set - OAuth will not work",
-    );
-    return "";
-  }
-  return clientSecret;
+  return CLIENT_SECRET;
 }
 
 /** OAuth scopes for cloud platform and user email access */
@@ -92,6 +63,86 @@ function buildAuthUrl(params: Record<string, string>): URL {
   return url;
 }
 
+// =============================================================================
+// Type Guards for API Responses
+// =============================================================================
+
+/**
+ * Gemini API error details structure for VALIDATION_REQUIRED
+ */
+interface GeminiApiError {
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+    details?: Array<{
+      '@type'?: string;
+      metadata?: Record<string, string>;
+    }>;
+  };
+}
+
+/**
+ * Type guard for OAuthError responses
+ */
+function isOAuthError(data: unknown): data is OAuthError {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof (data as Record<string, unknown>).error === "string"
+  );
+}
+
+/**
+ * Type guard for Gemini API error responses
+ */
+function isGeminiApiError(data: unknown): data is GeminiApiError {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof (data as Record<string, unknown>).error === "object"
+  );
+}
+
+/**
+ * Type guard for Google user info responses
+ */
+function isGoogleUserInfo(data: unknown): data is GoogleUserInfo {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "email" in data &&
+    typeof (data as Record<string, unknown>).email === "string"
+  );
+}
+
+/**
+ * Type guard for raw token response from Google
+ */
+function isTokenResponse(data: unknown): data is {
+  access_token: string;
+  refresh_token?: string;
+  token_type: string;
+  expires_in: number;
+  scope?: string;
+  id_token?: string;
+} {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "access_token" in data &&
+    typeof (data as Record<string, unknown>).access_token === "string" &&
+    "expires_in" in data &&
+    typeof (data as Record<string, unknown>).expires_in === "number"
+  );
+}
+
+// =============================================================================
+// Token Parsing
+// =============================================================================
+
 /**
  * Parse token response and add expiry timestamp
  *
@@ -116,6 +167,173 @@ function parseTokenResponse(response: {
     scope: response.scope,
     id_token: response.id_token,
   };
+}
+
+// =============================================================================
+// Validation URL Extraction
+// =============================================================================
+
+/**
+ * Extract validation URL from Gemini API error response
+ *
+ * When a user's account requires one-time verification (VALIDATION_REQUIRED),
+ * the API returns a 403 error with a validation URL in error.details[].metadata.
+ *
+ * @param errorData - Raw error response from Gemini API
+ * @returns Validation URL if present, null otherwise
+ *
+ * @example
+ * ```ts
+ * const error = await response.json();
+ * const url = extractValidationUrl(error);
+ * if (url) {
+ *   console.log("Please visit:", url);
+ * }
+ * ```
+ */
+export function extractValidationUrl(errorData: unknown): string | null {
+  if (!isGeminiApiError(errorData)) {
+    return null;
+  }
+
+  const details = errorData.error?.details;
+  if (!Array.isArray(details) || details.length === 0) {
+    return null;
+  }
+
+  // Look for validation_url in metadata of any detail entry
+  for (const detail of details) {
+    const metadata = detail.metadata;
+    if (metadata && typeof metadata === "object") {
+      const validationUrl = metadata.validation_url;
+      if (typeof validationUrl === "string" && validationUrl.length > 0) {
+        consoleDebug(PREFIX.API, `Found validation URL: ${validationUrl}`);
+        return validationUrl;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Discover GCP projects accessible with a token
+ *
+ * Uses Cloud Resource Manager API to list all projects the token has access to.
+ * This is called after initial token creation or during refresh to populate
+ * the projects array in StoredToken.
+ *
+ * @param accessToken - OAuth access token
+ * @returns Array of project IDs, empty array on failure
+ *
+ * @example
+ * ```ts
+ * const projects = await discoverProjects(token.access_token);
+ * console.log("Found projects:", projects);
+ * ```
+ */
+export async function discoverProjects(
+  accessToken: string,
+): Promise<string[]> {
+  consoleDebug(PREFIX.API, "Discovering GCP projects");
+
+  try {
+    const projects: string[] = [];
+    let pageToken: string | undefined;
+
+    // Paginate through all projects
+    do {
+      const url = new URL(
+        "https://cloudresourcemanager.googleapis.com/v1/projects",
+      );
+      if (pageToken) {
+        url.searchParams.set("pageToken", pageToken);
+      }
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        consoleError(
+          PREFIX.ERROR,
+          `Failed to list projects: ${response.status} ${response.statusText}`,
+        );
+        return [];
+      }
+
+      const data: unknown = await response.json();
+
+      // Type guard for projects response
+      if (
+        typeof data === "object" &&
+        data !== null &&
+        "projects" in data &&
+        Array.isArray((data as { projects?: unknown[] }).projects)
+      ) {
+        const projectsData = (data as { projects: { projectId?: string }[] })
+          .projects;
+
+        for (const project of projectsData) {
+          if (project.projectId && typeof project.projectId === "string") {
+            projects.push(project.projectId);
+          }
+        }
+
+        // Check for next page
+        if (
+          "nextPageToken" in data &&
+          typeof (data as { nextPageToken?: string }).nextPageToken === "string"
+        ) {
+          pageToken = (data as { nextPageToken: string }).nextPageToken;
+        } else {
+          pageToken = undefined;
+        }
+      } else {
+        pageToken = undefined;
+      }
+    } while (pageToken);
+
+    consoleLog(PREFIX.SUCCESS, `Discovered ${projects.length} GCP projects`);
+    return projects;
+  } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `Project discovery error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return [];
+  }
+}
+
+/**
+ * Check if an error indicates VALIDATION_REQUIRED status
+ *
+ * @param errorData - Raw error response from API
+ * @returns true if error indicates validation is required
+ */
+export function isValidationRequired(errorData: unknown): boolean {
+  if (!isGeminiApiError(errorData)) {
+    return false;
+  }
+
+  // VALIDATION_REQUIRED is indicated by 403 status code
+  const code = errorData.error?.code;
+  const message = errorData.error?.message;
+  const status = errorData.error?.status;
+
+  // Check for explicit VALIDATION_REQUIRED in status or message
+  if (status === "VALIDATION_REQUIRED" || message?.includes("VALIDATION_REQUIRED")) {
+    return true;
+  }
+
+  // Check for 403 with validation_url in details
+  if (code === 403 && extractValidationUrl(errorData) !== null) {
+    return true;
+  }
+
+  return false;
 }
 
 // =============================================================================
@@ -191,7 +409,10 @@ export async function exchangeCodeForTokens(
     });
 
     if (!response.ok) {
-      const errorData = (await response.json()) as OAuthError;
+      const rawError: unknown = await response.json();
+      const errorData = isOAuthError(rawError)
+        ? rawError
+        : { error: "unknown", error_description: String(rawError) };
       consoleError(
         PREFIX.ERROR,
         `Token exchange failed: ${errorData.error} - ${errorData.error_description || "No description"}`,
@@ -199,7 +420,14 @@ export async function exchangeCodeForTokens(
       return null;
     }
 
-    const data = await response.json();
+    const data: unknown = await response.json();
+    if (!isTokenResponse(data)) {
+      consoleError(
+        PREFIX.ERROR,
+        "Token exchange returned invalid response shape",
+      );
+      return null;
+    }
     const tokenData = parseTokenResponse(data);
 
     consoleLog(PREFIX.SUCCESS, "Successfully exchanged code for tokens");
@@ -216,7 +444,7 @@ export async function exchangeCodeForTokens(
 /**
  * Refresh an access token using a refresh token
  *
- * Based on pulsona lines 1612-1652
+ * Based on gswarm lines 1612-1652
  *
  * @param tokenData - Current token data containing the refresh token
  * @returns Updated TokenData on success, null on failure
@@ -256,7 +484,10 @@ export async function refreshAccessToken(
     });
 
     if (!response.ok) {
-      const errorData = (await response.json()) as OAuthError;
+      const rawError: unknown = await response.json();
+      const errorData = isOAuthError(rawError)
+        ? rawError
+        : { error: "unknown", error_description: String(rawError) };
       consoleError(
         PREFIX.ERROR,
         `Token refresh failed: ${errorData.error} - ${errorData.error_description || "No description"}`,
@@ -264,7 +495,14 @@ export async function refreshAccessToken(
       return null;
     }
 
-    const data = await response.json();
+    const data: unknown = await response.json();
+    if (!isTokenResponse(data)) {
+      consoleError(
+        PREFIX.ERROR,
+        "Token refresh returned invalid response shape",
+      );
+      return null;
+    }
     const newTokenData = parseTokenResponse(data);
 
     // Preserve the refresh token if not returned in the response
@@ -286,7 +524,7 @@ export async function refreshAccessToken(
 /**
  * Check if a token is expired or about to expire
  *
- * Based on pulsona lines 1600-1607
+ * Based on gswarm lines 1600-1607
  *
  * @param tokenData - Token data to check
  * @returns true if token is expired or will expire within buffer period
@@ -313,7 +551,7 @@ export function isTokenExpired(tokenData: TokenData): boolean {
 /**
  * Get the email address associated with a token
  *
- * Based on pulsona lines 1658-1678
+ * Based on gswarm lines 1658-1678
  *
  * @param tokenData - Token data with access token
  * @returns Email address on success, null on failure
@@ -346,15 +584,14 @@ export async function getTokenEmailFromData(
       return null;
     }
 
-    const userInfo = (await response.json()) as GoogleUserInfo;
-
-    if (!userInfo.email) {
+    const rawUserInfo: unknown = await response.json();
+    if (!isGoogleUserInfo(rawUserInfo)) {
       consoleError(PREFIX.ERROR, "No email in user info response");
       return null;
     }
 
-    consoleDebug(PREFIX.API, `Retrieved email: ${userInfo.email}`);
-    return userInfo.email;
+    consoleDebug(PREFIX.API, `Retrieved email: ${rawUserInfo.email}`);
+    return rawUserInfo.email;
   } catch (error) {
     consoleError(
       PREFIX.ERROR,
@@ -417,10 +654,8 @@ export async function revokeToken(accessToken: string): Promise<boolean> {
 
 /** OAuth configuration for testing and external use */
 export const OAUTH_CONFIG = {
-  /** Get the configured client ID (from environment) */
-  get CLIENT_ID() {
-    return getClientId();
-  },
+  /** Gemini-CLI OAuth client ID */
+  CLIENT_ID,
   SCOPE,
   EXPIRY_BUFFER_SECONDS,
   GOOGLE_AUTH_URL,

@@ -24,7 +24,8 @@ const numberInputVariants = cva(
       },
       variant: {
         default: "border-border",
-        error: "border-red focus-within:ring-red focus-within:border-red",
+        error:
+          "border-red-500 focus-within:ring-red focus-within:border-red-500",
       },
     },
     defaultVariants: {
@@ -297,7 +298,11 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
         </div>
 
         {error && (
-          <p id={`${inputId}-error`} className="text-xs text-red" role="alert">
+          <p
+            id={`${inputId}-error`}
+            className="text-xs text-red-500"
+            role="alert"
+          >
             {error}
           </p>
         )}

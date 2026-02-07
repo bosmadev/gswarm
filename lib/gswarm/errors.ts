@@ -497,3 +497,119 @@ export class ApiError extends Error {
     return new ApiError(ErrorCode.SYSTEM_UNKNOWN, message, undefined, false);
   }
 }
+
+// =============================================================================
+// TYPED ERROR SUBCLASSES
+// =============================================================================
+
+/**
+ * Network-level errors (fetch failures, timeouts, DNS resolution)
+ */
+export class GSwarmNetworkError extends Error {
+  readonly isRetryable: boolean;
+  readonly projectId?: string;
+  readonly latencyMs?: number;
+
+  constructor(
+    message: string,
+    options?: {
+      isRetryable?: boolean;
+      projectId?: string;
+      latencyMs?: number;
+      cause?: unknown;
+    },
+  ) {
+    super(message, options?.cause ? { cause: options.cause } : undefined);
+    this.name = "GSwarmNetworkError";
+    this.isRetryable = options?.isRetryable ?? true;
+    this.projectId = options?.projectId;
+    this.latencyMs = options?.latencyMs;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+/**
+ * Token/authentication errors (expired tokens, invalid credentials, refresh failures)
+ */
+export class GSwarmTokenError extends Error {
+  readonly tokenType: "access" | "refresh" | "oauth";
+  readonly email?: string;
+
+  constructor(
+    message: string,
+    options?: {
+      tokenType?: "access" | "refresh" | "oauth";
+      email?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(message, options?.cause ? { cause: options.cause } : undefined);
+    this.name = "GSwarmTokenError";
+    this.tokenType = options?.tokenType ?? "access";
+    this.email = options?.email;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+/**
+ * Parse errors (JSON parse failures, malformed responses)
+ */
+export class GSwarmParseError extends Error {
+  readonly rawLength?: number;
+  readonly projectId?: string;
+
+  constructor(
+    message: string,
+    options?: {
+      rawLength?: number;
+      projectId?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(message, options?.cause ? { cause: options.cause } : undefined);
+    this.name = "GSwarmParseError";
+    this.rawLength = options?.rawLength;
+    this.projectId = options?.projectId;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+/**
+ * Project selection errors (no projects available, all projects failed)
+ */
+export class GSwarmProjectError extends Error {
+  readonly errorType: "no_projects" | "selection_failed" | "all_failed";
+
+  constructor(
+    message: string,
+    options?: {
+      errorType?: "no_projects" | "selection_failed" | "all_failed";
+      cause?: unknown;
+    },
+  ) {
+    super(message, options?.cause ? { cause: options.cause } : undefined);
+    this.name = "GSwarmProjectError";
+    this.errorType = options?.errorType ?? "selection_failed";
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+/**
+ * Configuration errors (missing env vars, invalid config)
+ */
+export class GSwarmConfigError extends Error {
+  readonly configKey?: string;
+
+  constructor(
+    message: string,
+    options?: {
+      configKey?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(message, options?.cause ? { cause: options.cause } : undefined);
+    this.name = "GSwarmConfigError";
+    this.configKey = options?.configKey;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}

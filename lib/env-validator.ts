@@ -10,6 +10,7 @@ import {
   consoleLog,
   consoleWarn,
 } from "@/lib/console";
+import { GSwarmConfigError } from "@/lib/gswarm/errors";
 
 // =============================================================================
 // Types
@@ -21,6 +22,8 @@ export interface EnvVariable {
   required: boolean;
   description: string;
   example?: string;
+  /** If false, suppress warning when optional var is unset (has programmatic default). Default: true */
+  warnIfMissing?: boolean;
 }
 
 /** Environment validation result */
@@ -45,18 +48,28 @@ const ENV_VARIABLES: EnvVariable[] = [
     required: false,
     description: "Node environment (development, production, test)",
     example: "production",
+    warnIfMissing: false,
   },
   {
-    name: "NEXT_PUBLIC_APP_URL",
+    name: "GLOBAL_URL",
     required: false,
-    description: "Public application URL for callbacks and redirects",
+    description: "Application URL for OAuth callbacks and redirects",
     example: "https://gswarm.example.com",
+    warnIfMissing: false,
+  },
+  {
+    name: "GLOBAL_PORT",
+    required: false,
+    description: "Server port (used by launch script and Next.js)",
+    example: "3001",
+    warnIfMissing: false,
   },
   {
     name: "DEBUG",
     required: false,
     description: "Enable debug logging (true/false or 1/0)",
     example: "false",
+    warnIfMissing: false,
   },
 
   // ==================================================
@@ -99,23 +112,6 @@ const ENV_VARIABLES: EnvVariable[] = [
   },
 
   // ==================================================
-  // GOOGLE OAUTH
-  // ==================================================
-
-  {
-    name: "GOOGLE_CLIENT_ID",
-    required: false, // Dynamically checked in validate() for production
-    description: "Google OAuth 2.0 Client ID for authentication",
-    example: "your_client_id.apps.googleusercontent.com",
-  },
-  {
-    name: "GOOGLE_CLIENT_SECRET",
-    required: false, // Dynamically checked in validate() for production
-    description: "Google OAuth 2.0 Client Secret",
-    example: "your_client_secret",
-  },
-
-  // ==================================================
   // SESSION
   // ==================================================
 
@@ -136,48 +132,85 @@ const ENV_VARIABLES: EnvVariable[] = [
     required: false,
     description: "Gemini model to use for AI generation",
     example: "gemini-2.5-pro",
+    warnIfMissing: false,
   },
   {
     name: "GSWARM_MAX_OUTPUT_TOKENS",
     required: false,
     description: "Maximum number of tokens in the AI output",
     example: "65536",
+    warnIfMissing: false,
   },
   {
     name: "GSWARM_TEMPERATURE",
     required: false,
     description: "AI output randomness (0.0-2.0, lower = more deterministic)",
     example: "1.0",
+    warnIfMissing: false,
   },
   {
     name: "GSWARM_TOP_P",
     required: false,
     description: "Nucleus sampling parameter (0.0-1.0)",
     example: "0.95",
+    warnIfMissing: false,
   },
   {
     name: "GSWARM_THINKING_ENABLED",
     required: false,
     description: "Enable thinking mode for extended reasoning (true/false)",
     example: "true",
+    warnIfMissing: false,
   },
   {
     name: "GSWARM_THINKING_BUDGET",
     required: false,
     description: "Token budget for thinking mode",
     example: "32768",
+    warnIfMissing: false,
   },
   {
     name: "GSWARM_MAX_RETRIES",
     required: false,
     description: "Maximum number of retries for failed requests",
     example: "3",
+    warnIfMissing: false,
   },
   {
     name: "GSWARM_BASE_RETRY_DELAY",
     required: false,
     description: "Base delay in milliseconds between retries",
     example: "1000",
+    warnIfMissing: false,
+  },
+
+  // ==================================================
+  // ERROR LOG CLEANUP
+  // ==================================================
+
+  {
+    name: "ERROR_LOG_MAX_AGE_DAYS",
+    required: false,
+    description:
+      "Maximum age in days for error.log before deletion (default: 14)",
+    example: "14",
+    warnIfMissing: false,
+  },
+  {
+    name: "ERROR_LOG_MAX_SIZE_MB",
+    required: false,
+    description:
+      "Maximum size in MB for error.log before truncation (default: 10)",
+    example: "10",
+    warnIfMissing: false,
+  },
+  {
+    name: "ERROR_LOG_CLEANUP_SCHEDULE",
+    required: false,
+    description:
+      "Cron schedule for error log cleanup (default: daily midnight)",
+    example: "0 0 * * *",
+    warnIfMissing: false,
   },
 ];
 
@@ -191,14 +224,6 @@ class EnvValidator {
    */
   private isRequired(envVarName: string): boolean {
     const isProduction = process.env.NODE_ENV === "production";
-
-    // Google OAuth credentials are required in production
-    if (
-      envVarName === "GOOGLE_CLIENT_ID" ||
-      envVarName === "GOOGLE_CLIENT_SECRET"
-    ) {
-      return isProduction;
-    }
 
     // Session secret is required in production
     if (envVarName === "SESSION_SECRET") {
@@ -232,14 +257,16 @@ class EnvValidator {
               `  Example: ${envVar.example || "N/A"}`,
           );
         } else {
+          // Suppress warnings for vars with programmatic defaults
+          if (envVar.warnIfMissing === false) {
+            continue;
+          }
+
           // Suppress warnings for conditionally required variables not relevant in current mode
-          const isOAuthKey =
-            envVar.name === "GOOGLE_CLIENT_ID" ||
-            envVar.name === "GOOGLE_CLIENT_SECRET";
           const isSessionKey = envVar.name === "SESSION_SECRET";
 
           // In development, suppress warnings for production-only requirements
-          if (!isProduction && (isOAuthKey || isSessionKey)) {
+          if (!isProduction && isSessionKey) {
             continue;
           }
 
@@ -297,8 +324,9 @@ class EnvValidator {
   get(name: string, fallback?: string): string {
     const value = process.env[name];
     if (!value && fallback === undefined) {
-      throw new Error(
+      throw new GSwarmConfigError(
         `Environment variable ${name} is not set and no fallback provided`,
+        { configKey: name },
       );
     }
     return value || fallback || "";
@@ -321,8 +349,7 @@ class EnvValidator {
     const env: Record<string, string> = {};
     switch (service) {
       case "google":
-        env.clientId = this.get("GOOGLE_CLIENT_ID", "");
-        env.clientSecret = this.get("GOOGLE_CLIENT_SECRET", "");
+        // OAuth credentials are hardcoded (gemini-cli public creds), not env vars
         break;
       case "admin":
         env.username = this.get("ADMIN_USERNAME", "");

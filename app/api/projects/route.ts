@@ -1,7 +1,9 @@
 /**
  * @file app/api/projects/route.ts
- * @description Admin API route for listing all projects grouped by owner.
- * Retrieves projects from all accounts and groups them by owner email.
+ * @version 2.0
+ * @description Admin API route for listing all projects.
+ * Discovers projects live from Google Cloud Resource Manager API
+ * using stored OAuth tokens, with metrics overlay.
  *
  * @route GET /api/projects
  */
@@ -9,28 +11,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
 import { PREFIX, consoleError } from "@/lib/console";
-import {
-  getDataPath,
-  listFiles,
-  readJsonFile,
-} from "@/lib/gswarm/storage/base";
+import { getAllGcpProjects } from "@/lib/gswarm/projects";
 import { getTodayDateString, loadMetrics } from "@/lib/gswarm/storage/metrics";
 import { loadProjectStatuses } from "@/lib/gswarm/storage/projects";
-
-/** Project structure */
-interface Project {
-  projectId: string;
-  name: string;
-  enabled: boolean;
-  createdAt?: string;
-  lastUsed?: string;
-}
-
-/** Projects storage structure */
-interface ProjectsStorage {
-  projects: Project[];
-  updatedAt: string;
-}
 
 /** Frontend project structure */
 interface FrontendProject {
@@ -55,11 +38,11 @@ interface ProjectsResponse {
 
 /**
  * GET /api/projects
- * Get all projects with filtering, sorting, and pagination
+ * Discover projects from GCP with filtering, sorting, and pagination
  */
 export async function GET(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -72,31 +55,19 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search") || "";
     const accountId = searchParams.get("accountId");
-    const sortField = searchParams.get("sortField") || "lastUsed";
-    const sortDirection = searchParams.get("sortDirection") || "desc";
+    const sortField = searchParams.get("sortField") || "name";
+    const sortDirection = searchParams.get("sortDirection") || "asc";
     const page = Number.parseInt(searchParams.get("page") || "1", 10);
-    const pageSize = Number.parseInt(searchParams.get("pageSize") || "10", 10);
+    const pageSize = Number.parseInt(searchParams.get("pageSize") || "50", 10);
+    const forceRefresh = searchParams.get("refresh") === "true";
 
-    const projectsDir = getDataPath("projects");
-    const filesResult = await listFiles(projectsDir, ".json");
-
-    if (!filesResult.success) {
-      return NextResponse.json({
-        projects: [],
-        total: 0,
-        page: 1,
-        pageSize,
-        totalPages: 0,
-      } satisfies ProjectsResponse);
-    }
-
-    const allProjects: FrontendProject[] = [];
-
-    // Load metrics and project statuses for status detection
-    const [metricsResult, projectStatusesResult] = await Promise.all([
-      loadMetrics(getTodayDateString()),
-      loadProjectStatuses(),
-    ]);
+    // Discover projects from GCP + load metrics in parallel
+    const [gcpProjects, metricsResult, projectStatusesResult] =
+      await Promise.all([
+        getAllGcpProjects(forceRefresh),
+        loadMetrics(getTodayDateString()),
+        loadProjectStatuses(),
+      ]);
 
     const projectMetrics = metricsResult.success
       ? metricsResult.data.aggregated.by_project
@@ -106,90 +77,59 @@ export async function GET(request: NextRequest) {
       : new Map();
     const now = Date.now();
 
-    // Filter files by accountId if specified (before loading)
-    const filesToLoad = filesResult.data.filter((file) => {
-      if (accountId && accountId !== "all") {
-        const email = file.replace(".json", "");
-        const expectedAccountId = Buffer.from(email).toString("base64");
-        return expectedAccountId === accountId;
-      }
-      return true;
-    });
+    // Map GCP projects to frontend format
+    let allProjects: FrontendProject[] = gcpProjects.map((gcp) => {
+      const metrics = projectMetrics[gcp.project_id];
+      const successCount = metrics?.successful ?? 0;
+      const errorCount = metrics?.failed ?? 0;
+      const projectStatus = projectStatuses.get(gcp.project_id);
 
-    // Parallelize all project file reads to avoid N+1 pattern
-    const projectReadPromises = filesToLoad.map((file) => {
-      const filePath = `${projectsDir}/${file}`;
-      return readJsonFile<ProjectsStorage>(filePath).then((result) => ({
-        file,
-        result,
-      }));
-    });
+      // Determine status
+      let status: FrontendProject["status"] = "disabled";
+      if (gcp.api_enabled) {
+        const inCooldown =
+          projectStatus &&
+          (now < projectStatus.cooldownUntil ||
+            (projectStatus.quotaResetTime &&
+              now < projectStatus.quotaResetTime));
 
-    const projectResults = await Promise.all(projectReadPromises);
-
-    for (const { file, result: projectsResult } of projectResults) {
-      // Extract email from filename (email.json)
-      const email = file.replace(".json", "");
-
-      if (projectsResult.success && projectsResult.data) {
-        for (const project of projectsResult.data.projects) {
-          // API enabled status comes from the project's enabled property
-          const apiEnabled = project.enabled;
-
-          // Get metrics for this project
-          const metrics = projectMetrics[project.projectId];
-          const successCount = metrics?.successful ?? 0;
-          const errorCount = metrics?.failed ?? 0;
-
-          // Get project status for cooldown/error detection
-          const projectStatus = projectStatuses.get(project.projectId);
-
-          // Determine status based on project state, cooldown, and error rate
-          let status: FrontendProject["status"] = "disabled";
-          if (project.enabled) {
-            // Check if in cooldown
-            const inCooldown =
-              projectStatus &&
-              (now < projectStatus.cooldownUntil ||
-                (projectStatus.quotaResetTime &&
-                  now < projectStatus.quotaResetTime));
-
-            if (inCooldown) {
-              status = "cooldown";
-            } else if (
-              projectStatus?.lastErrorType &&
-              projectStatus.consecutiveErrors >= 3
-            ) {
-              // High consecutive errors indicate error state
-              status = "error";
-            } else if (metrics && metrics.total > 0) {
-              // Check error rate - if > 50% errors, mark as error
-              const errorRate = metrics.failed / metrics.total;
-              status = errorRate > 0.5 ? "error" : "active";
-            } else {
-              status = "active";
-            }
-          }
-
-          allProjects.push({
-            id: project.projectId,
-            name: project.name,
-            owner: email,
-            apiEnabled,
-            status,
-            successCount,
-            errorCount,
-            lastUsed: project.lastUsed || null,
-          });
+        if (inCooldown) {
+          status = "cooldown";
+        } else if (
+          projectStatus?.lastErrorType &&
+          projectStatus.consecutiveErrors >= 3
+        ) {
+          status = "error";
+        } else if (metrics && metrics.total > 0) {
+          const errorRate = metrics.failed / metrics.total;
+          status = errorRate > 0.5 ? "error" : "active";
+        } else {
+          status = "active";
         }
       }
+
+      return {
+        id: gcp.project_id,
+        name: gcp.name,
+        owner: gcp.owner_email,
+        apiEnabled: gcp.api_enabled,
+        status,
+        successCount,
+        errorCount,
+        lastUsed: null,
+      };
+    });
+
+    // Filter by accountId if specified
+    if (accountId && accountId !== "all") {
+      const decodedEmail = Buffer.from(accountId, "base64").toString("utf-8");
+      allProjects = allProjects.filter((p) => p.owner === decodedEmail);
     }
 
     // Apply search filter
-    let filteredProjects = allProjects;
     if (search) {
       const searchLower = search.toLowerCase();
-      filteredProjects = allProjects.filter(
+      allProjects = allProjects.filter(
         (p) =>
           p.name.toLowerCase().includes(searchLower) ||
           p.id.toLowerCase().includes(searchLower),
@@ -197,7 +137,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Apply sorting
-    filteredProjects.sort((a, b) => {
+    allProjects.sort((a, b) => {
       let aVal: string | number | null;
       let bVal: string | number | null;
 
@@ -235,8 +175,8 @@ export async function GET(request: NextRequest) {
           bVal = b.lastUsed || "";
           break;
         default:
-          aVal = a.lastUsed || "";
-          bVal = b.lastUsed || "";
+          aVal = a.name;
+          bVal = b.name;
       }
 
       if (aVal === null) return 1;
@@ -247,11 +187,11 @@ export async function GET(request: NextRequest) {
     });
 
     // Calculate pagination
-    const total = filteredProjects.length;
+    const total = allProjects.length;
     const totalPages = Math.ceil(total / pageSize);
     const startIndex = (page - 1) * pageSize;
     const endIndex = startIndex + pageSize;
-    const paginatedProjects = filteredProjects.slice(startIndex, endIndex);
+    const paginatedProjects = allProjects.slice(startIndex, endIndex);
 
     return NextResponse.json({
       projects: paginatedProjects,

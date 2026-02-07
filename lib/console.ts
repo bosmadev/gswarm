@@ -229,6 +229,56 @@ export function highlight(text: string, color: string = YELLOW): string {
 }
 
 /**
+ * Format a number with color based on its value
+ * Positive numbers are green, negative are red, zero is yellow
+ *
+ * @param value - The number to format
+ * @param options - Formatting options
+ * @returns Formatted and colored number string
+ *
+ * @example
+ * colorNumber(5.25) // green "5.25"
+ * colorNumber(-3.75) // red "-3.75"
+ * colorNumber(0) // yellow "0.00"
+ * colorNumber(100, { prefix: '$', decimals: 0 }) // green "$100"
+ */
+export function colorNumber(
+  value: number,
+  options: {
+    /** Color for positive values (default: GREEN) */
+    positive?: string;
+    /** Color for negative values (default: RED) */
+    negative?: string;
+    /** Color for zero values (default: YELLOW) */
+    zero?: string;
+    /** Prefix to add before the number */
+    prefix?: string;
+    /** Suffix to add after the number */
+    suffix?: string;
+    /** Number of decimal places (default: 2) */
+    decimals?: number;
+  } = {},
+): string {
+  const {
+    positive = GREEN,
+    negative = RED,
+    zero = YELLOW,
+    prefix = "",
+    suffix = "",
+    decimals = 2,
+  } = options;
+
+  // Determine color based on value
+  const color = value > 0 ? positive : value < 0 ? negative : zero;
+
+  // Format the number with fixed decimals
+  const formatted = value.toFixed(decimals);
+
+  // Apply styling and return
+  return styled(`${prefix}${formatted}${suffix}`, { color, bold: true });
+}
+
+/**
  * Create a separator line with specified character, length, and color
  *
  * @param char - Character to repeat (default: '─')
@@ -453,6 +503,39 @@ export function consoleDir(
 }
 
 /**
+ * Displays the XML/HTML element representation of a DOM node.
+ *
+ * @param prefix - Log prefix (from PREFIX constants)
+ * @param message - Message to log before the node
+ * @param node - DOM node to display
+ */
+export function consoleDirxml(
+  prefix: string,
+  message: string,
+  node: unknown,
+): void {
+  console.log(formatLog(prefix, message));
+  console.dirxml(node);
+}
+
+/**
+ * Logs an error only if the specified condition is false.
+ *
+ * @param condition - Condition to check
+ * @param prefix - Log prefix (from PREFIX constants)
+ * @param message - Message to log if condition is false
+ * @param args - Additional arguments
+ */
+export function consoleAssert(
+  condition: boolean,
+  prefix: string,
+  message: string,
+  ...args: unknown[]
+): void {
+  console.assert(condition, formatLog(prefix, message), ...args);
+}
+
+/**
  * Starts a timer for tracking duration.
  *
  * @param prefix - Log prefix (from PREFIX constants)
@@ -470,6 +553,26 @@ export function consoleTime(prefix: string, label: string): void {
  */
 export function consoleTimeEnd(prefix: string, label: string): void {
   console.timeEnd(formatLog(prefix, label));
+}
+
+/**
+ * Increments and outputs a counter for a specific label.
+ *
+ * @param prefix - Log prefix (from PREFIX constants)
+ * @param label - Counter label
+ */
+export function consoleCount(prefix: string, label: string): void {
+  console.count(formatLog(prefix, label));
+}
+
+/**
+ * Resets the counter for a specific label.
+ *
+ * @param prefix - Log prefix (from PREFIX constants)
+ * @param label - Counter label
+ */
+export function consoleCountReset(prefix: string, label: string): void {
+  console.countReset(formatLog(prefix, label));
 }
 
 /**

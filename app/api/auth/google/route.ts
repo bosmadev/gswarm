@@ -11,6 +11,7 @@
 import { NextResponse } from "next/server";
 import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
 import { generateAuthUrl } from "@/lib/gswarm/oauth";
+import { getCallbackUrl } from "@/lib/gswarm/url-builder";
 
 /**
  * GET /api/auth/google
@@ -23,9 +24,8 @@ export async function GET() {
     // Generate CSRF state parameter
     const state = crypto.randomUUID();
 
-    // Build redirect URI
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const redirectUri = `${appUrl}/api/auth/callback`;
+    // Build redirect URI from centralized url-builder
+    const redirectUri = getCallbackUrl();
 
     // Generate Google OAuth URL
     const authUrl = generateAuthUrl(redirectUri, state);

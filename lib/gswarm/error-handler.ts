@@ -110,7 +110,18 @@ function mapErrorCodeToLogType(code: ErrorCode): ErrorLogType {
 }
 
 /**
- * Creates a standardized error response from an ApiError
+ * Creates a standardized error response from an ApiError.
+ * Handles rate limit headers, Retry-After, error logging, and response formatting.
+ *
+ * @param error - The ApiError to convert to a response
+ * @param options - Optional configuration for headers, logging, and error recording
+ * @returns A NextResponse with the error JSON body and appropriate HTTP status
+ *
+ * @example
+ * ```ts
+ * const apiError = ApiError.missingApiKey();
+ * return errorResponse(apiError, { endpoint: "/api/gswarm/generate" });
+ * ```
  */
 export function errorResponse(
   error: ApiError,
@@ -138,7 +149,11 @@ export function errorResponse(
     recordError({
       type: mapErrorCodeToLogType(error.code),
       message: error.message,
-      projectId: projectId ?? (error.details?.projectId as string) ?? null,
+      projectId:
+        projectId ??
+        (typeof error.details?.projectId === "string"
+          ? error.details.projectId
+          : null),
       projectName: projectName ?? null,
       accountId: accountId ?? null,
       accountEmail: accountEmail ?? null,
@@ -166,12 +181,22 @@ export function errorResponse(
     responseHeaders["X-RateLimit-Reset"] = String(rateLimitReset);
   }
 
+  // Add CORS headers for cross-origin API access
+  responseHeaders["Access-Control-Allow-Origin"] = "*";
+  responseHeaders["Access-Control-Allow-Methods"] =
+    "GET, POST, PUT, DELETE, OPTIONS";
+  responseHeaders["Access-Control-Allow-Headers"] =
+    "Content-Type, Authorization, X-Requested-With";
+
   // Add Retry-After for rate limit and service unavailable errors
   if (
     error.code === ErrorCode.AUTH_RATE_LIMIT ||
     error.code === ErrorCode.GSWARM_RATE_LIMIT
   ) {
-    const retryAfter = error.details?.retryAfter as number | undefined;
+    const retryAfter =
+      typeof error.details?.retryAfter === "number"
+        ? error.details.retryAfter
+        : undefined;
     if (retryAfter) {
       responseHeaders["Retry-After"] = String(retryAfter);
     } else if (rateLimitReset) {
@@ -190,8 +215,13 @@ export function errorResponse(
 }
 
 /**
- * Creates an unauthorized error response with rate limit headers
- * (Convenience wrapper for common use case)
+ * Creates an unauthorized error response with rate limit headers.
+ * Convenience wrapper for the common case of invalid API keys.
+ *
+ * @param message - Human-readable error message
+ * @param rateLimitRemaining - Optional remaining request count
+ * @param rateLimitReset - Optional timestamp when rate limit resets
+ * @returns A NextResponse with 401 status and rate limit headers
  */
 export function unauthorizedErrorResponse(
   message: string,

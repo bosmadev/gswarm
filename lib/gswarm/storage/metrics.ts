@@ -1,4 +1,14 @@
-import * as path from "node:path";
+/**
+ * @file lib/gswarm/storage/metrics.ts
+ * @version 1.0
+ * @description Metrics storage with write batching and real-time aggregation.
+ *
+ * Records per-request metrics and maintains real-time aggregated statistics
+ * by endpoint, account, and project. Uses deferred disk writes to avoid
+ * blocking the request path, with an in-memory cache as the source of truth.
+ */
+
+import { join } from "node:path";
 import type {
   AggregatedMetrics,
   DailyMetrics,
@@ -37,6 +47,39 @@ function getMetricsCacheForDate(date: string): CacheManager<DailyMetrics> {
     metricsCacheByDate.set(date, cacheManager);
   }
   return cacheManager;
+}
+
+// =============================================================================
+// Write batching for metrics (avoids disk write on every request)
+// =============================================================================
+
+/** Pending flush timers keyed by file path */
+const pendingFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Flush delay in milliseconds - batches writes within this window */
+const METRICS_FLUSH_DELAY_MS = 500;
+
+/**
+ * Schedules a deferred write for metrics data.
+ * If multiple metrics arrive within the flush window, only one write occurs.
+ */
+function scheduleMetricsFlush(filePath: string, data: DailyMetrics): void {
+  // Clear any existing pending flush for this file
+  const existing = pendingFlushTimers.get(filePath);
+  if (existing) {
+    clearTimeout(existing);
+  }
+
+  // Schedule a new flush
+  const timer = setTimeout(() => {
+    pendingFlushTimers.delete(filePath);
+    writeJsonFile(filePath, data).catch(() => {
+      // Write failures are non-fatal for the request path;
+      // the in-memory cache is already updated.
+    });
+  }, METRICS_FLUSH_DELAY_MS);
+
+  pendingFlushTimers.set(filePath, timer);
 }
 
 /**
@@ -288,7 +331,7 @@ export async function loadMetrics(
   const result = await readJsonFile<DailyMetrics>(filePath);
 
   if (!result.success) {
-    if (result.error === "File not found") {
+    if (result.error?.startsWith("File not found")) {
       const emptyMetrics = createEmptyDailyMetrics(targetDate);
       return { success: true, data: emptyMetrics };
     }
@@ -302,12 +345,35 @@ export async function loadMetrics(
 }
 
 /**
- * Records a new metric and updates aggregated stats in real-time
+ * Records a new request metric and updates aggregated stats in real-time.
+ * The in-memory cache is updated immediately for read consistency, while
+ * the disk write is deferred via batching to avoid blocking the response.
+ *
+ * @param metric - The request metric to record
+ * @returns Success or error result
+ *
+ * @example
+ * ```ts
+ * await recordMetric({
+ *   id: "gen-abc123",
+ *   timestamp: new Date().toISOString(),
+ *   endpoint: "/api/gswarm/generate",
+ *   method: "POST",
+ *   account_id: "my-key",
+ *   project_id: "project-1",
+ *   duration_ms: 1250,
+ *   status: "success",
+ *   status_code: 200,
+ *   tokens_used: 500,
+ *   model: "gemini-2.0-flash",
+ * });
+ * ```
  */
 export async function recordMetric(
   metric: RequestMetric,
 ): Promise<StorageResult<void>> {
-  const metricDate = metric.timestamp.split("T")[0];
+  const metricDate =
+    metric.timestamp.split("T")[0] ?? metric.timestamp.slice(0, 10);
   const loadResult = await loadMetrics(metricDate);
 
   if (!loadResult.success) {
@@ -325,23 +391,32 @@ export async function recordMetric(
   // Update timestamp
   dailyMetrics.updated_at = new Date().toISOString();
 
-  // Write to file
-  const filePath = getMetricsPath(metricDate);
-  const writeResult = await writeJsonFile(filePath, dailyMetrics);
-
-  if (!writeResult.success) {
-    return writeResult;
-  }
-
-  // Update cache
+  // Update cache immediately so reads are consistent
   const cacheManager = getMetricsCacheForDate(metricDate);
   cacheManager.set(dailyMetrics);
+
+  // Defer disk write to avoid blocking the response hot path
+  const filePath = getMetricsPath(metricDate);
+  scheduleMetricsFlush(filePath, dailyMetrics);
 
   return { success: true, data: undefined };
 }
 
 /**
- * Gets aggregated metrics for a date range
+ * Gets aggregated metrics for a date range, merging daily data.
+ *
+ * @param startDate - Start date string (YYYY-MM-DD)
+ * @param endDate - End date string (YYYY-MM-DD), defaults to today
+ * @returns Aggregated metrics with breakdowns by endpoint, account, and project
+ *
+ * @example
+ * ```ts
+ * const result = await getAggregatedMetrics("2026-01-01", "2026-01-31");
+ * if (result.success) {
+ *   console.log(`Total requests: ${result.data.total_requests}`);
+ *   console.log(`Success rate: ${(result.data.successful_requests / result.data.total_requests * 100).toFixed(1)}%`);
+ * }
+ * ```
  */
 export async function getAggregatedMetrics(
   startDate: string,
@@ -353,16 +428,27 @@ export async function getAggregatedMetrics(
     `${end}T23:59:59.999Z`,
   );
 
-  // Iterate through each day in the range
+  // Collect all dates in the range
+  const dates: string[] = [];
   const start = new Date(startDate);
   const endDt = new Date(end);
 
   for (let d = new Date(start); d <= endDt; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().split("T")[0];
-    const dailyResult = await loadMetrics(dateStr);
+    dates.push(d.toISOString().split("T")[0] ?? d.toISOString().slice(0, 10));
+  }
 
-    if (dailyResult.success && dailyResult.data.requests.length > 0) {
-      mergeAggregated(result, dailyResult.data.aggregated);
+  // Load all days in parallel
+  const settled = await Promise.allSettled(
+    dates.map((dateStr) => loadMetrics(dateStr)),
+  );
+
+  for (const dayResult of settled) {
+    if (
+      dayResult.status === "fulfilled" &&
+      dayResult.value.success &&
+      dayResult.value.data.requests.length > 0
+    ) {
+      mergeAggregated(result, dayResult.value.data.aggregated);
     }
   }
 
@@ -483,7 +569,9 @@ export async function cleanupOldMetrics(
 
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - keepDays);
-  const cutoffStr = cutoffDate.toISOString().split("T")[0];
+  const cutoffStr =
+    cutoffDate.toISOString().split("T")[0] ??
+    cutoffDate.toISOString().slice(0, 10);
 
   let deletedCount = 0;
   const errors: string[] = [];
@@ -495,7 +583,7 @@ export async function cleanupOldMetrics(
 
     const fileDate = dateMatch[1];
     if (fileDate < cutoffStr) {
-      const filePath = path.join(metricsDir, file);
+      const filePath = join(metricsDir, file);
       const deleteResult = await deleteFile(filePath);
 
       if (deleteResult.success) {

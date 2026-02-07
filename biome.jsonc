@@ -2,9 +2,13 @@
   "files": {
     "includes": ["**", "!temp", "!.next", "!python", "!.claude"]
   },
+  "vcs": {
+    "useIgnoreFile": true
+  },
   "css": {
     "parser": {
-      "tailwindDirectives": true
+      "tailwindDirectives": true,
+      "cssModules": true
     }
   },
   "formatter": {
@@ -49,9 +53,8 @@
     {
       "includes": [
         "lib/console.ts",
-        "scripts/reinstall.mjs",
-        "scripts/sync-version.mjs",
-        "scripts/launch.ts"
+        "scripts/launch.ts",
+        "python/sync-pyproject.ts"
       ],
       "linter": {
         "rules": {

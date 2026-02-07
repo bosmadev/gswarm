@@ -20,5 +20,7 @@ export {
   NotificationProvider,
   useNotifications,
 } from "./notification-provider";
+// React Grab provider (DEBUG mode only)
+export { ReactGrabProvider, useReactGrab } from "./react-grab-provider";
 // Theme provider
 export { ThemeProvider, useTheme } from "./theme-provider";

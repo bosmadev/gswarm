@@ -1,5 +1,6 @@
 /**
  * @file app/api/projects/test/route.ts
+ * @version 1.0
  * @description Admin API route for testing project connection.
  * Tests connectivity to a specific GCP project via gswarmClient.
  *
@@ -99,7 +100,7 @@ async function testProjectConnection(
  */
 export async function POST(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },

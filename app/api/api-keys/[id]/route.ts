@@ -1,5 +1,6 @@
 /**
  * @file app/api/api-keys/[id]/route.ts
+ * @version 1.0
  * @description Admin API route for managing individual API keys.
  * Provides endpoint to delete API keys by their hash.
  *
@@ -8,6 +9,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import { deleteApiKeyByHash } from "@/lib/gswarm/storage/api-keys";
 
 /** Route params */
@@ -21,7 +23,7 @@ interface RouteParams {
  */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -62,6 +64,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       message: "API key deleted successfully",
     });
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] DELETE /api/api-keys/[id] failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
         error: "Failed to delete API key",

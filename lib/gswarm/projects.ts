@@ -4,6 +4,9 @@
  * This module provides:
  * 1. Local project management (storage-based ProjectInfo)
  * 2. GCP project discovery with Cloud AI Companion API enablement status
+ *
+ * All consumers should import from this facade module rather than
+ * reaching into ./storage/projects directly.
  */
 
 import { PREFIX, consoleDebug, consoleError, consoleLog } from "@/lib/console";
@@ -12,6 +15,7 @@ import {
   loadProjectStatuses,
   clearProjectCooldown as storageClearProjectCooldown,
   getAvailableProjects as storageGetAvailableProjects,
+  getEnabledProjects as storageGetEnabledProjects,
   getProjectStatus as storageGetProjectStatus,
   getQuotaExhaustedProjects as storageGetQuotaExhaustedProjects,
   isProjectInCooldown as storageIsProjectInCooldown,
@@ -29,6 +33,14 @@ import type {
   ServiceUsageResponse,
   StoredToken,
 } from "./types";
+
+// =============================================================================
+// Re-exports from storage layer
+// =============================================================================
+// These allow consumers to use the facade instead of bypassing to storage/projects.
+
+export { storageGetEnabledProjects as getEnabledProjects };
+export { loadProjectStatuses };
 
 // =============================================================================
 // Constants
@@ -53,6 +65,9 @@ const RESOURCE_MANAGER_API = "https://cloudresourcemanager.googleapis.com/v1";
 /** GCP Service Usage API base URL */
 const SERVICE_USAGE_API = "https://serviceusage.googleapis.com/v1";
 
+/** Default timeout for external API calls (30 seconds) */
+const DEFAULT_API_TIMEOUT_MS = 30_000;
+
 // =============================================================================
 // In-Memory Cache for GCP Projects
 // =============================================================================
@@ -64,12 +79,44 @@ let cachedProjects: GcpProjectInfo[] = [];
 let projectsCacheTime = 0;
 
 // =============================================================================
+// Internal Helpers
+// =============================================================================
+
+/**
+ * Creates a fetch request with an AbortController timeout.
+ * Automatically aborts if the request exceeds `timeoutMs`.
+ */
+function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = DEFAULT_API_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  return fetch(url, { ...init, signal: controller.signal }).finally(() =>
+    clearTimeout(timer),
+  );
+}
+
+// =============================================================================
 // Project Status Operations
 // =============================================================================
 
 /**
- * Get project status by ID
- * Returns null if project not found (instead of error)
+ * Get project status by ID.
+ * Returns null if the project is not found instead of throwing.
+ *
+ * @param projectId - The unique GCP project identifier
+ * @returns The project status, or null if the project is not found
+ *
+ * @example
+ * ```ts
+ * const status = await getProjectStatus("my-project-123");
+ * if (status) {
+ *   console.log("Success count:", status.successCount);
+ * }
+ * ```
  */
 export async function getProjectStatus(
   projectId: string,
@@ -82,8 +129,17 @@ export async function getProjectStatus(
 }
 
 /**
- * Get or create project status
- * Creates a default status if project doesn't exist
+ * Get or create project status.
+ * Creates a default status if the project does not exist in storage.
+ *
+ * @param projectId - The unique GCP project identifier
+ * @returns The existing or newly created project status
+ *
+ * @example
+ * ```ts
+ * const status = await getOrCreateProjectStatus("my-project-123");
+ * console.log("Consecutive errors:", status.consecutiveErrors);
+ * ```
  */
 export async function getOrCreateProjectStatus(
   projectId: string,
@@ -96,7 +152,11 @@ export async function getOrCreateProjectStatus(
 }
 
 /**
- * Check if a project is currently in cooldown
+ * Check if a project is currently in cooldown.
+ * A project in cooldown should not be selected for new requests.
+ *
+ * @param projectId - The unique GCP project identifier
+ * @returns True if the project is in cooldown, false otherwise
  */
 export async function isProjectInCooldown(projectId: string): Promise<boolean> {
   const result = await storageIsProjectInCooldown(projectId);
@@ -104,8 +164,10 @@ export async function isProjectInCooldown(projectId: string): Promise<boolean> {
 }
 
 /**
- * Get the cooldown end time for a project (in ms since epoch)
- * Returns 0 if not in cooldown
+ * Get the cooldown end time for a project.
+ *
+ * @param projectId - The unique GCP project identifier
+ * @returns Unix timestamp (ms since epoch) when cooldown expires, or 0 if not in cooldown
  */
 export async function getProjectCooldownUntil(
   projectId: string,
@@ -115,7 +177,25 @@ export async function getProjectCooldownUntil(
 }
 
 /**
- * Set a project into cooldown for a specific duration
+ * Update project status with partial updates.
+ * Delegates to the storage layer for persistence.
+ *
+ * @param projectId - The unique GCP project identifier
+ * @param updates - Partial project status fields to update
+ */
+export async function updateProjectStatus(
+  projectId: string,
+  updates: Partial<ProjectStatus>,
+): Promise<void> {
+  await storageUpdateProjectStatus(projectId, updates);
+}
+
+/**
+ * Set a project into cooldown for a specific duration.
+ * The project will not be selected for requests until the cooldown expires.
+ *
+ * @param projectId - The unique GCP project identifier
+ * @param durationMs - Cooldown duration in milliseconds (default: 5 minutes)
  */
 export async function setProjectCooldown(
   projectId: string,
@@ -126,7 +206,10 @@ export async function setProjectCooldown(
 }
 
 /**
- * Clear a project's cooldown
+ * Clear a project's cooldown, making it immediately available for selection.
+ *
+ * @param projectId - The unique GCP project identifier
+ * @returns The updated project status, or null if not found
  */
 export async function clearProjectCooldown(
   projectId: string,
@@ -140,8 +223,11 @@ export async function clearProjectCooldown(
 // =============================================================================
 
 /**
- * Record a successful request for a project
- * Resets consecutive errors and updates timestamps
+ * Record a successful request for a project.
+ * Resets consecutive errors and updates success timestamps.
+ *
+ * @param projectId - The unique GCP project identifier
+ * @returns The updated project status, or null on failure
  */
 export async function recordProjectSuccess(
   projectId: string,
@@ -151,7 +237,13 @@ export async function recordProjectSuccess(
 }
 
 /**
- * Record an error for a project with exponential backoff cooldown
+ * Record an error for a project with exponential backoff cooldown.
+ * Increments consecutive error count and may trigger cooldown.
+ *
+ * @param projectId - The unique GCP project identifier
+ * @param errorType - The type of error encountered (e.g., "rate_limit", "auth", "server")
+ * @param quotaResetTime - Optional Unix timestamp (ms) when the quota resets
+ * @returns The updated project status, or null on failure
  */
 export async function recordProjectError(
   projectId: string,
@@ -171,7 +263,9 @@ export async function recordProjectError(
 // =============================================================================
 
 /**
- * Get all available projects (not in cooldown), sorted by LRU
+ * Get all available projects (not in cooldown), sorted by LRU.
+ *
+ * @returns Array of project statuses for available projects
  */
 export async function getAvailableProjects(): Promise<ProjectStatus[]> {
   const result = await storageGetAvailableProjects();
@@ -179,7 +273,9 @@ export async function getAvailableProjects(): Promise<ProjectStatus[]> {
 }
 
 /**
- * Get all projects with exhausted quota
+ * Get all projects with exhausted quota.
+ *
+ * @returns Array of project statuses for quota-exhausted projects
  */
 export async function getQuotaExhaustedProjects(): Promise<ProjectStatus[]> {
   const result = await storageGetQuotaExhaustedProjects();
@@ -214,7 +310,7 @@ export async function checkApiEnabled(
   const url = `${SERVICE_USAGE_API}/projects/${encodeURIComponent(projectId)}/services/${CLOUD_AI_COMPANION_API}`;
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${authToken}`,
@@ -233,12 +329,19 @@ export async function checkApiEnabled(
       return false;
     }
 
-    const data: ServiceUsageResponse = await response.json();
-    return data.state === "ENABLED";
+    const data: unknown = await response.json();
+    const serviceData =
+      typeof data === "object" && data !== null
+        ? (data as ServiceUsageResponse)
+        : null;
+    return serviceData?.state === "ENABLED";
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const isTimeout =
+      error instanceof DOMException && error.name === "AbortError";
     consoleError(
       PREFIX.ERROR,
-      `Error checking API status for ${projectId}: ${error instanceof Error ? error.message : String(error)}`,
+      `${isTimeout ? "Timeout" : "Error"} checking API status for ${projectId}: ${message}`,
     );
     return false;
   }
@@ -249,7 +352,8 @@ export async function checkApiEnabled(
 // =============================================================================
 
 /**
- * Fetches all active GCP projects for a given token
+ * Fetches all active GCP projects for a given token.
+ * Uses pagination and returns partial results on error (pages fetched before failure).
  *
  * @param token - OAuth token with access credentials
  * @returns Array of GCP projects accessible by this token
@@ -268,7 +372,7 @@ async function fetchProjectsForToken(
     }
 
     try {
-      const response = await fetch(url.toString(), {
+      const response = await fetchWithTimeout(url.toString(), {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token.access_token}`,
@@ -284,19 +388,26 @@ async function fetchProjectsForToken(
         break;
       }
 
-      const data: GcpProjectsResponse = await response.json();
+      const rawData: unknown = await response.json();
+      const data =
+        typeof rawData === "object" && rawData !== null
+          ? (rawData as GcpProjectsResponse)
+          : null;
 
-      if (data.projects) {
+      if (data?.projects) {
         projects.push(...data.projects);
       }
 
-      pageToken = data.nextPageToken;
+      pageToken = data?.nextPageToken;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isTimeout =
+        error instanceof DOMException && error.name === "AbortError";
       consoleError(
         PREFIX.ERROR,
-        `Error fetching projects for ${token.email}: ${error instanceof Error ? error.message : String(error)}`,
+        `${isTimeout ? "Timeout" : "Error"} fetching projects for ${token.email}: ${message}`,
       );
-      break;
+      break; // Return whatever pages we successfully fetched
     }
   } while (pageToken);
 
@@ -304,7 +415,11 @@ async function fetchProjectsForToken(
 }
 
 /**
- * Gets all GCP projects across all valid tokens, with API enablement status
+ * Gets all GCP projects across all valid tokens, with API enablement status.
+ *
+ * - Fetches projects from all tokens in parallel (Promise.allSettled)
+ * - Checks API enablement for all discovered projects in parallel
+ * - Returns partial results if any individual call fails
  *
  * @param forceRefresh - If true, bypasses the cache and fetches fresh data
  * @returns Array of GcpProjectInfo with API enablement status
@@ -352,42 +467,76 @@ export async function getAllGcpProjects(
     `Discovering projects for ${tokens.length} token(s)`,
   );
 
-  const allProjects: GcpProjectInfo[] = [];
+  // Fetch projects for ALL tokens in parallel
+  const tokenResults = await Promise.allSettled(
+    tokens.map((token) => fetchProjectsForToken(token)),
+  );
+
+  // Deduplicate projects across tokens, tracking which token discovered each
   const seenProjectIds = new Set<string>();
+  const projectTokenPairs: { project: GcpProject; token: StoredToken }[] = [];
 
-  // Fetch projects for each token
-  for (const token of tokens) {
-    const gcpProjects = await fetchProjectsForToken(token);
+  for (let i = 0; i < tokenResults.length; i++) {
+    const result = tokenResults[i];
+    const token = tokens[i];
 
+    if (result.status === "rejected") {
+      consoleError(
+        PREFIX.ERROR,
+        `Project discovery failed for ${token.email}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+      );
+      continue; // Skip this token, proceed with others
+    }
+
+    const gcpProjects = result.value;
     consoleDebug(
       PREFIX.DEBUG,
       `Found ${gcpProjects.length} projects for ${token.email}`,
     );
 
-    // Check API enablement for each project
     for (const project of gcpProjects) {
-      // Skip duplicate projects (same project accessible by multiple accounts)
       if (seenProjectIds.has(project.projectId)) {
         continue;
       }
       seenProjectIds.add(project.projectId);
-
-      const apiEnabled = await checkApiEnabled(
-        project.projectId,
-        token.access_token,
-      );
-
-      const projectInfo: GcpProjectInfo = {
-        project_id: project.projectId,
-        name: project.name,
-        project_number: project.projectNumber,
-        api_enabled: apiEnabled,
-        owner_email: token.email,
-        token_id: token.email, // Using email as token identifier
-      };
-
-      allProjects.push(projectInfo);
+      projectTokenPairs.push({ project, token });
     }
+  }
+
+  // Check API enablement for ALL unique projects in parallel
+  const apiCheckResults = await Promise.allSettled(
+    projectTokenPairs.map(({ project, token }) =>
+      checkApiEnabled(project.projectId, token.access_token),
+    ),
+  );
+
+  const allProjects: GcpProjectInfo[] = [];
+
+  for (let i = 0; i < projectTokenPairs.length; i++) {
+    const { project, token } = projectTokenPairs[i];
+    const apiResult = apiCheckResults[i];
+
+    // If the API check itself rejected, treat as disabled (partial recovery)
+    const apiEnabled =
+      apiResult.status === "fulfilled" ? apiResult.value : false;
+
+    if (apiResult.status === "rejected") {
+      consoleError(
+        PREFIX.ERROR,
+        `API check rejected for ${project.projectId}: ${apiResult.reason instanceof Error ? apiResult.reason.message : String(apiResult.reason)}`,
+      );
+    }
+
+    const projectInfo: GcpProjectInfo = {
+      project_id: project.projectId,
+      name: project.name,
+      project_number: project.projectNumber,
+      api_enabled: apiEnabled,
+      owner_email: token.email,
+      token_id: token.email, // Using email as token identifier
+    };
+
+    allProjects.push(projectInfo);
   }
 
   // Update cache

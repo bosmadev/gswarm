@@ -1,6 +1,6 @@
 /**
  * @file components/ui/service-icons.tsx
- * @description SVG icons for external services used in the topbar status indicators.
+ * @description SVG icons for external services used in the dashboard status indicators.
  */
 
 import { cn } from "@/lib/utils";

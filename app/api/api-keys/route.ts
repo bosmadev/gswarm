@@ -1,5 +1,6 @@
 /**
  * @file app/api/api-keys/route.ts
+ * @version 1.0
  * @description Admin API route for managing API keys.
  * Provides endpoints to list and create API keys.
  *
@@ -9,6 +10,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import {
   type CreateApiKeyOptions,
   createApiKey,
@@ -78,7 +80,7 @@ function sanitizeApiKey(key: ApiKeyConfig): SanitizedApiKey {
  */
 export async function GET(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -101,6 +103,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ keys: sanitizedKeys });
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] GET /api/api-keys failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
         error: "Failed to load API keys",
@@ -117,7 +123,7 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -230,6 +236,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] POST /api/api-keys failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
         error: "Failed to create API key",

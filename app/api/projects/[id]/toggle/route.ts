@@ -1,52 +1,33 @@
 /**
  * @file app/api/projects/[id]/toggle/route.ts
- * @description Admin API route for toggling project enabled/disabled status.
- * Updates the local tracking of project status.
+ * @version 2.0
+ * @description Admin API route for project enable/disable status.
+ * Projects are now discovered live from GCP. The Cloud AI Companion API
+ * status is managed via the Google Cloud Console, not locally.
  *
  * @route POST /api/projects/[id]/toggle
  */
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
-import {
-  getDataPath,
-  listFiles,
-  readJsonFile,
-  writeJsonFile,
-} from "@/lib/gswarm/storage/base";
-
-/** Project structure */
-interface Project {
-  projectId: string;
-  name: string;
-  enabled: boolean;
-  createdAt?: string;
-  lastUsed?: string;
-}
-
-/** Projects storage structure */
-interface ProjectsStorage {
-  projects: Project[];
-  updatedAt: string;
-}
+import { PREFIX, consoleError } from "@/lib/console";
+import { getAllGcpProjects } from "@/lib/gswarm/projects";
 
 /** Route params */
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-/** Request body */
-interface ToggleRequestBody {
-  enabled: boolean;
-}
-
 /**
  * POST /api/projects/[id]/toggle
- * Toggle project enabled/disabled status
+ *
+ * Returns the current API-enabled status for the project.
+ * The Cloud AI Companion API is managed via the Google Cloud Console;
+ * this endpoint reports the live status discovered from GCP.
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -64,68 +45,40 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
 
   try {
-    // Parse request body
-    const body = (await request.json()) as ToggleRequestBody;
-    const { enabled } = body;
+    // Discover projects live from GCP
+    const gcpProjects = await getAllGcpProjects();
 
-    if (typeof enabled !== "boolean") {
+    // Find the requested project
+    const project = gcpProjects.find((p) => p.project_id === projectId);
+
+    if (!project) {
       return NextResponse.json(
-        { error: "enabled field must be a boolean" },
-        { status: 400 },
+        {
+          error: "Project not found",
+          message: `Project "${projectId}" was not found in GCP project discovery. It may not exist or the associated account may not have access.`,
+        },
+        { status: 404 },
       );
     }
 
-    const projectsDir = getDataPath("projects");
-    const filesResult = await listFiles(projectsDir, ".json");
-
-    if (!filesResult.success) {
-      return NextResponse.json(
-        { error: "Failed to access projects storage" },
-        { status: 500 },
-      );
-    }
-
-    // Search for the project in all account files
-    for (const file of filesResult.data) {
-      const filePath = `${projectsDir}/${file}`;
-      const projectsResult = await readJsonFile<ProjectsStorage>(filePath);
-
-      if (!projectsResult.success || !projectsResult.data) {
-        continue;
-      }
-
-      const storage = projectsResult.data;
-      const projectIndex = storage.projects.findIndex(
-        (p) => p.projectId === projectId,
-      );
-
-      if (projectIndex !== -1) {
-        // Update the enabled status
-        storage.projects[projectIndex].enabled = enabled;
-        storage.updatedAt = new Date().toISOString();
-
-        const writeResult = await writeJsonFile(filePath, storage);
-
-        if (!writeResult.success) {
-          return NextResponse.json(
-            { error: "Failed to update project status" },
-            { status: 500 },
-          );
-        }
-
-        return NextResponse.json({
-          success: true,
-          enabled: storage.projects[projectIndex].enabled,
-          projectId,
-        });
-      }
-    }
-
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    return NextResponse.json({
+      success: true,
+      projectId: project.project_id,
+      name: project.name,
+      enabled: project.api_enabled,
+      owner_email: project.owner_email,
+      message: project.api_enabled
+        ? "Cloud AI Companion API is enabled. To disable it, use the Google Cloud Console."
+        : "Cloud AI Companion API is not enabled. To enable it, use the Google Cloud Console.",
+    });
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] POST /api/projects/${projectId}/toggle failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
-        error: "Failed to toggle project status",
+        error: "Failed to check project status",
         message: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

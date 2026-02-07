@@ -1,7 +1,7 @@
 /**
- * POST /api/gswarm/generate
- *
- * Simple text generation endpoint.
+ * @file app/api/gswarm/generate/route.ts
+ * @version 1.0
+ * @description Simple text generation endpoint.
  * Validates API key and IP, then generates content using GSwarm.
  */
 
@@ -16,7 +16,12 @@ import {
 import { ApiError } from "@/lib/gswarm/errors";
 import { recordMetric } from "@/lib/gswarm/storage/metrics";
 import type { RequestMetric } from "@/lib/gswarm/types";
-import { addRateLimitHeaders, authenticateRequest } from "../_shared/auth";
+import {
+  addCorsHeaders,
+  addRateLimitHeaders,
+  authenticateRequest,
+  corsPreflightResponse,
+} from "../_shared/auth";
 
 /**
  * Request body for generate endpoint
@@ -86,12 +91,14 @@ export async function POST(request: NextRequest) {
 
   // Validate prompt is not empty
   if (!prompt.trim()) {
-    return NextResponse.json(
-      {
-        error: "Validation failed",
-        message: "Prompt cannot be empty",
-      },
-      { status: 400 },
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Validation failed",
+          message: "Prompt cannot be empty",
+        },
+        { status: 400 },
+      ),
     );
   }
 
@@ -142,6 +149,7 @@ export async function POST(request: NextRequest) {
     };
 
     const jsonResponse = NextResponse.json(response);
+    addCorsHeaders(jsonResponse);
     return addRateLimitHeaders(
       jsonResponse,
       auth.rateLimitRemaining,
@@ -187,4 +195,12 @@ export async function POST(request: NextRequest) {
       rateLimitReset: auth.rateLimitReset,
     });
   }
+}
+
+/**
+ * OPTIONS /api/gswarm/generate
+ * CORS preflight handler
+ */
+export function OPTIONS() {
+  return corsPreflightResponse();
 }

@@ -10,7 +10,7 @@
  * - Graceful error handling with logging
  */
 
-import * as cron from "node-cron";
+import { type ScheduledTask, schedule } from "node-cron";
 import { PREFIX, consoleDebug, consoleError, consoleLog } from "@/lib/console";
 import { refreshAccessToken } from "./oauth";
 import {
@@ -36,7 +36,7 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 // =============================================================================
 
 /** Scheduled cron job instance */
-let refreshJob: cron.ScheduledTask | null = null;
+let refreshJob: ScheduledTask | null = null;
 
 /** Whether the service is currently running a refresh cycle */
 let isRefreshing = false;
@@ -110,9 +110,17 @@ async function refreshSingleToken(
 }
 
 /**
- * Runs a refresh cycle for all tokens needing refresh
+ * Runs a refresh cycle for all tokens needing refresh.
+ * Skips if a refresh cycle is already in progress.
  *
- * @returns Array of refresh results
+ * @returns Array of refresh results for each token processed, or empty array if skipped
+ *
+ * @example
+ * ```ts
+ * const results = await runRefreshCycle();
+ * const succeeded = results.filter(r => r.success).length;
+ * console.log(`Refreshed ${succeeded} tokens`);
+ * ```
  */
 export async function runRefreshCycle(): Promise<TokenRefreshResult[]> {
   if (isRefreshing) {
@@ -146,16 +154,24 @@ export async function runRefreshCycle(): Promise<TokenRefreshResult[]> {
 
     consoleLog(PREFIX.INFO, `Refreshing ${tokensToRefresh.length} tokens`);
 
-    // Refresh each token
-    const results: TokenRefreshResult[] = [];
+    // Refresh all tokens in parallel
+    const settled = await Promise.allSettled(
+      tokensToRefresh.map((token) => refreshSingleToken(token)),
+    );
 
-    for (const token of tokensToRefresh) {
-      const result = await refreshSingleToken(token);
-      results.push(result);
-
-      // Small delay between refreshes to avoid rate limits
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    const results: TokenRefreshResult[] = settled.map((result) => {
+      if (result.status === "fulfilled") {
+        return result.value;
+      }
+      return {
+        success: false,
+        email: "unknown",
+        error:
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason),
+      };
+    });
 
     // Count results
     const succeeded = results.filter((r) => r.success).length;
@@ -179,10 +195,19 @@ export async function runRefreshCycle(): Promise<TokenRefreshResult[]> {
 }
 
 /**
- * Refreshes a specific token by email
+ * Refreshes a specific token by email address.
  *
- * @param email - Email of the token to refresh
- * @returns Refresh result
+ * @param email - Email address of the token to refresh
+ * @returns Refresh result with success status, email, new expiry, or error
+ * @throws Never throws; errors are returned in the result object
+ *
+ * @example
+ * ```ts
+ * const result = await refreshTokenByEmail("user@example.com");
+ * if (result.success) {
+ *   console.log("New expiry:", result.new_expiry);
+ * }
+ * ```
  */
 export async function refreshTokenByEmail(
   email: string,
@@ -221,7 +246,7 @@ export function startRefreshService(): void {
     "Starting token refresh service (schedule: every 30 min)",
   );
 
-  refreshJob = cron.schedule(REFRESH_SCHEDULE, async () => {
+  refreshJob = schedule(REFRESH_SCHEDULE, async () => {
     consoleDebug(PREFIX.DEBUG, "Cron trigger: running scheduled token refresh");
     await runRefreshCycle();
   });

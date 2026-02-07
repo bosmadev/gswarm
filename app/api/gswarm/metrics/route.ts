@@ -1,5 +1,6 @@
 /**
  * @file app/api/gswarm/metrics/route.ts
+ * @version 1.0
  * @description GSwarm metrics and status API endpoint
  * GET /api/gswarm/metrics - Get current status and quota information
  */
@@ -7,6 +8,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import { GSWARM_CONFIG } from "@/lib/gswarm/executor";
 import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 import {
@@ -15,6 +17,7 @@ import {
   predictQuotaExhaustion,
 } from "@/lib/gswarm/storage/metrics";
 import { getEnabledProjects } from "@/lib/gswarm/storage/projects";
+import { addCorsHeaders, corsPreflightResponse } from "../_shared/auth";
 
 /**
  * Extract API key from Authorization header
@@ -39,13 +42,16 @@ function getClientIp(request: NextRequest): string {
 }
 
 /**
- * Authenticate request using either session cookie or API key
+ * Authenticate request using either session cookie or API key.
+ *
+ * @param request - The incoming Next.js request
+ * @returns Validation result with error message if invalid
  */
 async function authenticateRequest(
   request: NextRequest,
 ): Promise<{ valid: boolean; error?: string }> {
   // First, try session authentication (for dashboard)
-  const sessionValidation = validateAdminSession(request);
+  const sessionValidation = await validateAdminSession(request);
   if (sessionValidation.valid) {
     return { valid: true };
   }
@@ -74,16 +80,15 @@ export async function GET(request: NextRequest) {
   // Authenticate request
   const authResult = await authenticateRequest(request);
   if (!authResult.valid) {
-    return NextResponse.json(
-      { success: false, error: authResult.error },
-      {
-        status:
-          authResult.error === "Rate limit exceeded"
-            ? 429
-            : authResult.error === "Missing authentication"
-              ? 401
-              : 401,
-      },
+    const isRateLimit = authResult.error === "Rate limit exceeded";
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: isRateLimit ? "Rate limit exceeded" : "Unauthorized",
+          message: authResult.error,
+        },
+        { status: isRateLimit ? 429 : 401 },
+      ),
     );
   }
 
@@ -101,9 +106,11 @@ export async function GET(request: NextRequest) {
     // Get aggregated metrics
     const metricsResult = await getAggregatedMetrics(startDate, endDate);
     if (!metricsResult.success) {
-      return NextResponse.json(
-        { success: false, error: metricsResult.error },
-        { status: 500 },
+      return addCorsHeaders(
+        NextResponse.json(
+          { error: "Failed to load metrics", message: metricsResult.error },
+          { status: 500 },
+        ),
       );
     }
 
@@ -155,56 +162,72 @@ export async function GET(request: NextRequest) {
       exhaustsIn = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
     }
 
-    return NextResponse.json({
-      success: true,
-      status: {
-        healthy: projects.length > 0,
-        backend: "gswarm",
-        model: GSWARM_CONFIG.model,
-        projectCount: projects.length,
-      },
-      quota: {
-        used: usedToday,
-        capacity: totalQuotaCapacity,
-        remaining: remainingQuota,
-        usageRatePerHour: Math.round(usageRatePerHour * 10) / 10,
-        exhaustsAt,
-        exhaustsIn,
-        prediction: quotaPrediction,
-      },
-      metrics: {
-        period: {
-          start: startDate,
-          end: endDate,
+    return addCorsHeaders(
+      NextResponse.json({
+        success: true,
+        status: {
+          healthy: projects.length > 0,
+          backend: "gswarm",
+          model: GSWARM_CONFIG.model,
+          projectCount: projects.length,
         },
-        requests: {
-          total: aggregated.total_requests,
-          successful: aggregated.successful_requests,
-          failed: aggregated.failed_requests,
-          successRate:
-            aggregated.total_requests > 0
-              ? (aggregated.successful_requests / aggregated.total_requests) *
-                100
-              : 100,
+        quota: {
+          used: usedToday,
+          capacity: totalQuotaCapacity,
+          remaining: remainingQuota,
+          usageRatePerHour: Math.round(usageRatePerHour * 10) / 10,
+          exhaustsAt,
+          exhaustsIn,
+          prediction: quotaPrediction,
         },
-        latency: {
-          avgMs: Math.round(aggregated.avg_duration_ms),
-          totalMs: aggregated.total_duration_ms,
+        metrics: {
+          period: {
+            start: startDate,
+            end: endDate,
+          },
+          requests: {
+            total: aggregated.total_requests,
+            successful: aggregated.successful_requests,
+            failed: aggregated.failed_requests,
+            successRate:
+              aggregated.total_requests > 0
+                ? (aggregated.successful_requests / aggregated.total_requests) *
+                  100
+                : 100,
+          },
+          latency: {
+            avgMs: Math.round(aggregated.avg_duration_ms),
+            totalMs: aggregated.total_duration_ms,
+          },
+          byEndpoint: aggregated.by_endpoint,
+          byAccount: aggregated.by_account,
+          byProject: aggregated.by_project,
+          errors: aggregated.error_breakdown,
         },
-        byEndpoint: aggregated.by_endpoint,
-        byAccount: aggregated.by_account,
-        byProject: aggregated.by_project,
-        errors: aggregated.error_breakdown,
-      },
-      accountErrorRates,
-    });
+        accountErrorRates,
+      }),
+    );
   } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
+    consoleError(
+      PREFIX.ERROR,
+      `[API] GET /api/gswarm/metrics failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Internal server error",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+        { status: 500 },
+      ),
     );
   }
+}
+
+/**
+ * OPTIONS /api/gswarm/metrics
+ * CORS preflight handler
+ */
+export function OPTIONS() {
+  return corsPreflightResponse();
 }

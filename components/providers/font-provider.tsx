@@ -25,7 +25,7 @@ interface FontContextValue {
 
 const FontContext = React.createContext<FontContextValue | null>(null);
 
-const FONT_STORAGE_KEY = "pulsona-font";
+const FONT_STORAGE_KEY = `${process.env.GLOBAL_APP_NAME}-font`;
 
 // =============================================================================
 // HOOK

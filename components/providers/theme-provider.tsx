@@ -30,7 +30,7 @@ const ThemeProviderContext = React.createContext<
 export function ThemeProvider({
   children,
   defaultTheme = "dark",
-  storageKey = "pulsona-ui-theme",
+  storageKey = `${process.env.GLOBAL_APP_NAME}-ui-theme`,
 }: ThemeProviderProps) {
   const [theme, setTheme] = React.useState<Theme>(defaultTheme);
   const [mounted, setMounted] = React.useState(false);

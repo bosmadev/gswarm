@@ -3,6 +3,7 @@
  * @description API route for fetching and managing error logs.
  * Supports filtering by type, account, and project, with date range queries.
  *
+ * @version 1.0
  * @module app/api/dashboard/errors
  */
 
@@ -21,7 +22,7 @@ import {
 
 export async function GET(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -78,7 +79,7 @@ export async function GET(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },

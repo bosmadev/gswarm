@@ -6,7 +6,7 @@ OpenAI-compatible API gateway for Google Cloud AI with multi-account token pooli
 
 ![Next.js](https://img.shields.io/badge/Next.js-16+-black?logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9+-3178C6?logo=typescript)
-![Node.js](https://img.shields.io/badge/Node.js-22+-339933?logo=node.js)
+![Node.js](https://img.shields.io/badge/Node.js-25+-339933?logo=node.js)
 
 </div>
 
@@ -58,8 +58,9 @@ DASHBOARD_USERS=user1:password1
 API_KEYS=mykey:sk-gswarm-xxxxx:*
 
 # Application
-NEXT_PUBLIC_APP_URL=https://your-domain.com
-NODE_ENV=production
+GLOBAL_PORT=3001
+GLOBAL_URL=http://localhost  # No port here - use GLOBAL_PORT
+# Production: GLOBAL_URL=https://your-domain.com (HTTPS doesn't need port)
 
 # Session Secret (generate with: openssl rand -base64 32)
 SESSION_SECRET=your-session-secret
@@ -102,9 +103,10 @@ ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your-password
 DASHBOARD_USERS=user1:pass1
 API_KEYS=key1:sk-gswarm-xxx:*
-NEXT_PUBLIC_APP_URL=https://your-domain.com
-NODE_ENV=production
+GLOBAL_PORT=3001
+GLOBAL_URL=https://your-domain.com
 SESSION_SECRET=your-session-secret
+# Note: HTTPS URLs don't need port (443 implicit)
 EOF
 
 # Secure the .env file
@@ -126,33 +128,17 @@ sudo journalctl -u gswarm-api -f
 sudo systemctl restart gswarm-api
 ```
 
-## VM Deployment
+## Development
 
-### Server Control
-
-```bash
-cd /opt/gswarm-api
-
-./launch.sh start        # Start in background
-./launch.sh foreground   # Run in foreground (Ctrl+C to stop)
-./launch.sh stop         # Stop server
-./launch.sh restart      # Restart server
-./launch.sh logs         # Tail error.log
-./launch.sh status       # Check if running
-```
-
-### CLI Scripts (Node.js 25+ required)
+### CLI Scripts
 
 ```bash
-node lib/gswarm/cli.ts status           # GSwarm status
-node lib/gswarm/cli.ts projects         # List projects
-node scripts/test-api-keys.ts list      # List API keys
+# GSwarm management
+node --experimental-transform-types lib/gswarm/cli.ts status     # Status overview
+node --experimental-transform-types lib/gswarm/cli.ts projects   # List projects
+
+# API keys are managed via the dashboard UI at /dashboard
 ```
-
-### Error Logs
-
-- **Production:** `/opt/gswarm-api/error.log`
-- **Development:** `./error.log` (gitignored)
 
 ## API Endpoints
 
@@ -168,9 +154,21 @@ node scripts/test-api-keys.ts list      # List API keys
 
 | Script | Description |
 |--------|-------------|
-| `pnpm dev` | Development server (port 3000) |
-| `pnpm build` | Production build |
-| `pnpm validate` | Run all checks |
+| `pnpm dev` | Development server with Turbopack |
+| `pnpm launch` | Interactive TUI launcher |
+| `pnpm build` | Production build (Next.js standalone) |
+| `pnpm validate` | Run all checks (Biome, Knip, TypeScript, tests) |
+| `pnpm gswarm` | GSwarm CLI for account management |
+
+## Build Tools
+
+| Tool | Purpose |
+|------|---------|
+| **Next.js** | App bundling, standalone build output |
+| **Biome** | Linting + formatting (replaces ESLint/Prettier) |
+| **Knip** | Dead code detection |
+| **TypeScript** | Type checking (`pnpm tsc`) |
+| **Vitest** | Unit testing |
 
 ## License
 

@@ -8,41 +8,49 @@
 
 "use client";
 
-import {
-  AlertCircle,
-  Cog,
-  FolderKanban,
-  Home,
-  Key,
-  Terminal,
-  Users,
-} from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import * as React from "react";
 import { Suspense } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AccountsSection } from "./accounts-section";
-import { APIKeysSection } from "./api-keys-section";
-import { CLICommandsPanel } from "./cli-commands-panel";
-import { ConfigurationPanel } from "./configuration-panel";
-import { ErrorLog } from "./error-log";
-import { MetricsCharts } from "./metrics-charts";
-import { ProjectsTable } from "./projects-table";
+
+const AccountsSection = React.lazy(() =>
+  import("./accounts-section").then((m) => ({ default: m.AccountsSection })),
+);
+const APIKeysSection = React.lazy(() =>
+  import("./api-keys-section").then((m) => ({ default: m.APIKeysSection })),
+);
+const CLICommandsPanel = React.lazy(() =>
+  import("./cli-commands-panel").then((m) => ({ default: m.CLICommandsPanel })),
+);
+const ConfigurationPanel = React.lazy(() =>
+  import("./configuration-panel").then((m) => ({
+    default: m.ConfigurationPanel,
+  })),
+);
+const ErrorLog = React.lazy(() =>
+  import("./error-log").then((m) => ({ default: m.ErrorLog })),
+);
+const MetricsCharts = React.lazy(() =>
+  import("./metrics-charts").then((m) => ({ default: m.MetricsCharts })),
+);
+const ProjectsTable = React.lazy(() =>
+  import("./projects-table").then((m) => ({ default: m.ProjectsTable })),
+);
 
 // ============================================================================
 // TAB CONFIGURATION
 // ============================================================================
 
 const tabConfig = [
-  { id: "overview", label: "Overview", icon: Home },
-  { id: "accounts", label: "Accounts", icon: Users },
-  { id: "projects", label: "Projects", icon: FolderKanban },
-  { id: "errors", label: "Error Log", icon: AlertCircle },
-  { id: "cli", label: "CLI", icon: Terminal },
-  { id: "api-keys", label: "API Keys", icon: Key },
-  { id: "config", label: "Configuration", icon: Cog },
+  { id: "overview", label: "Overview" },
+  { id: "accounts", label: "Accounts" },
+  { id: "projects", label: "Projects" },
+  { id: "errors", label: "Error Log" },
+  { id: "cli", label: "CLI" },
+  { id: "api-keys", label: "API Keys" },
+  { id: "config", label: "Configuration" },
 ] as const;
 
 type TabId = (typeof tabConfig)[number]["id"];
@@ -89,7 +97,9 @@ function OverviewTab() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
-        <p className="text-sm text-red mb-4">Failed to load dashboard stats</p>
+        <p className="text-sm text-red-500 mb-4">
+          Failed to load dashboard stats
+        </p>
       </div>
     );
   }
@@ -99,7 +109,7 @@ function OverviewTab() {
       <h2 className="text-xl font-semibold text-text-primary">
         Dashboard Overview
       </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-text-secondary">
@@ -143,7 +153,7 @@ function OverviewTab() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-green">
+            <p className="text-2xl font-bold text-green-500">
               {stats?.errorRate.toFixed(2) ?? 0}%
             </p>
           </CardContent>
@@ -158,7 +168,7 @@ function TabContentSkeleton() {
   return (
     <div className="space-y-6">
       <Skeleton className="h-8 w-48" />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <Skeleton key="skeleton-1" className="h-24" />
         <Skeleton key="skeleton-2" className="h-24" />
         <Skeleton key="skeleton-3" className="h-24" />
@@ -190,38 +200,46 @@ const tabComponents: Record<TabId, React.ComponentType> = {
 function DashboardTabsContent() {
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const defaultTab: TabId =
+  const activeTab: TabId =
     tabParam && tabConfig.some((t) => t.id === tabParam)
       ? (tabParam as TabId)
       : "overview";
 
   return (
     <div className="space-y-6">
-      <Tabs defaultValue={defaultTab} className="w-full">
-        <TabsList className="flex flex-wrap gap-1 h-auto p-1 bg-bg-secondary/50 border border-border/50 rounded-lg">
-          {tabConfig.map((tab) => (
-            <TabsTrigger
-              key={tab.id}
-              value={tab.id}
-              className="flex items-center gap-2 px-4 py-2 data-[state=active]:bg-orange/20 data-[state=active]:text-orange data-[state=active]:border-orange/50"
-            >
-              <tab.icon className="w-4 h-4" aria-hidden="true" />
-              <span>{tab.label}</span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
-        {tabConfig.map((tab) => {
-          const TabComponent = tabComponents[tab.id];
-          return (
-            <TabsContent key={tab.id} value={tab.id} className="mt-6">
-              <Suspense fallback={<TabContentSkeleton />}>
-                <TabComponent />
-              </Suspense>
-            </TabsContent>
-          );
-        })}
-      </Tabs>
+      {(() => {
+        const tab = tabConfig.find((t) => t.id === activeTab) ?? tabConfig[0];
+        const TabComponent = tabComponents[tab.id];
+        return (
+          <ErrorBoundary
+            fallbackRender={({ error, resetErrorBoundary }) => (
+              <Card className="border-destructive/50">
+                <CardHeader>
+                  <CardTitle className="text-destructive">
+                    {tab.label} failed to load
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    {error.message}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={resetErrorBoundary}
+                    className="text-sm text-orange hover:underline"
+                  >
+                    Try again
+                  </button>
+                </CardContent>
+              </Card>
+            )}
+          >
+            <Suspense fallback={<TabContentSkeleton />}>
+              <TabComponent />
+            </Suspense>
+          </ErrorBoundary>
+        );
+      })()}
     </div>
   );
 }

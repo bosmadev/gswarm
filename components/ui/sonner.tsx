@@ -14,7 +14,7 @@ import { useTheme } from "@/components/providers";
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 /**
- * Toaster component that wraps Sonner with Pulsona theme styling.
+ * Toaster component that wraps Sonner with GSwarm theme styling.
  */
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "dark" } = useTheme();

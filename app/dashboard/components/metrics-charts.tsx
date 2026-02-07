@@ -2,6 +2,7 @@
  * @file app/dashboard/components/metrics-charts.tsx
  * @description Dashboard metrics charts component displaying request and token usage over time.
  * Client component using recharts for visualization.
+ * Recharts is lazy-loaded to avoid bundling ~200-300 KB when the Overview tab isn't active.
  *
  * @module app/dashboard/components/metrics-charts
  */
@@ -9,18 +10,6 @@
 "use client";
 
 import * as React from "react";
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -76,212 +65,304 @@ function formatNumber(num: number): string {
   return num.toString();
 }
 
-/**
- * Custom tooltip component
- */
-function CustomTooltip({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: { color: string; name: string; value: number }[];
-  label?: string;
-}) {
-  if (!active || !payload?.length) return null;
+// ============================================================================
+// LAZY-LOADED CHARTS (recharts is only imported when these render)
+// ============================================================================
 
+/**
+ * Lazy-loaded chart grid that contains all recharts-dependent components.
+ * Recharts is dynamically imported only when this component mounts.
+ */
+const LazyChartGrid = React.lazy(() =>
+  import("recharts").then((recharts) => {
+    const {
+      Area,
+      AreaChart,
+      Bar,
+      BarChart,
+      CartesianGrid,
+      Legend,
+      ResponsiveContainer,
+      Tooltip,
+      XAxis,
+      YAxis,
+    } = recharts;
+
+    /**
+     * Custom tooltip component
+     */
+    function CustomTooltip({
+      active,
+      payload,
+      label,
+    }: {
+      active?: boolean;
+      payload?: { color: string; name: string; value: number }[];
+      label?: string;
+    }) {
+      if (!active || !payload?.length) return null;
+
+      return (
+        <div className="bg-bg-primary border border-border rounded-lg p-3 shadow-lg">
+          <p className="text-text-secondary text-sm mb-2">{label}</p>
+          {payload.map((entry) => (
+            <p
+              key={entry.name}
+              className="text-sm"
+              style={{ color: entry.color }}
+            >
+              {entry.name}: {formatNumber(entry.value)}
+            </p>
+          ))}
+        </div>
+      );
+    }
+
+    /**
+     * Requests chart showing successful vs failed requests
+     */
+    function RequestsChart({ data }: { data: MetricsDataPoint[] }) {
+      return (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">API Requests</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              tabIndex={-1}
+              aria-hidden="true"
+              role="img"
+              aria-label="Bar chart showing successful and failed API requests over time"
+            >
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={data}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={formatDate}
+                    stroke="#71717a"
+                    fontSize={12}
+                  />
+                  <YAxis
+                    tickFormatter={formatNumber}
+                    stroke="#71717a"
+                    fontSize={12}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend />
+                  <Bar
+                    dataKey="successful"
+                    name="Successful"
+                    fill={CHART_COLORS.successful}
+                    radius={[4, 4, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="failed"
+                    name="Failed"
+                    fill={CHART_COLORS.failed}
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    /**
+     * Error rate chart
+     */
+    function ErrorRateChart({ data }: { data: MetricsDataPoint[] }) {
+      return (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Error Rate (%)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              tabIndex={-1}
+              aria-hidden="true"
+              role="img"
+              aria-label="Area chart showing API error rate percentage over time"
+            >
+              <ResponsiveContainer width="100%" height={300}>
+                <AreaChart data={data}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={formatDate}
+                    stroke="#71717a"
+                    fontSize={12}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tickFormatter={(v) => `${v}%`}
+                    stroke="#71717a"
+                    fontSize={12}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="errorRate"
+                    name="Error Rate"
+                    stroke={CHART_COLORS.failed}
+                    fill={CHART_COLORS.failed}
+                    fillOpacity={0.3}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    /**
+     * Tokens used chart
+     */
+    function TokensChart({ data }: { data: MetricsDataPoint[] }) {
+      return (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Tokens Used</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              tabIndex={-1}
+              aria-hidden="true"
+              role="img"
+              aria-label="Area chart showing token usage over time"
+            >
+              <ResponsiveContainer width="100%" height={300}>
+                <AreaChart data={data}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={formatDate}
+                    stroke="#71717a"
+                    fontSize={12}
+                  />
+                  <YAxis
+                    tickFormatter={formatNumber}
+                    stroke="#71717a"
+                    fontSize={12}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="tokensUsed"
+                    name="Tokens"
+                    stroke={CHART_COLORS.tokens}
+                    fill={CHART_COLORS.tokens}
+                    fillOpacity={0.3}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    /**
+     * Average response time chart
+     */
+    function ResponseTimeChart({ data }: { data: MetricsDataPoint[] }) {
+      return (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Avg Response Time (ms)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              tabIndex={-1}
+              aria-hidden="true"
+              role="img"
+              aria-label="Area chart showing average API response time in milliseconds over time"
+            >
+              <ResponsiveContainer width="100%" height={300}>
+                <AreaChart data={data}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={formatDate}
+                    stroke="#71717a"
+                    fontSize={12}
+                  />
+                  <YAxis
+                    tickFormatter={(v) => `${v}ms`}
+                    stroke="#71717a"
+                    fontSize={12}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="avgDurationMs"
+                    name="Avg Duration"
+                    stroke={CHART_COLORS.duration}
+                    fill={CHART_COLORS.duration}
+                    fillOpacity={0.3}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    /**
+     * Chart grid component that renders all four charts.
+     * This is the default export consumed by React.lazy.
+     */
+    function ChartGrid({ data }: { data: MetricsDataPoint[] }) {
+      return (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <RequestsChart data={data} />
+          <ErrorRateChart data={data} />
+          <TokensChart data={data} />
+          <ResponseTimeChart data={data} />
+        </div>
+      );
+    }
+
+    return { default: ChartGrid };
+  }),
+);
+
+// ============================================================================
+// SKELETON / LOADING STATES
+// ============================================================================
+
+/**
+ * Loading skeleton for the chart grid.
+ * Used as Suspense fallback while recharts loads and as loading state during data fetch.
+ */
+function ChartGridSkeleton() {
   return (
-    <div className="bg-bg-primary border border-border rounded-lg p-3 shadow-lg">
-      <p className="text-text-secondary text-sm mb-2">{label}</p>
-      {payload.map((entry) => (
-        <p key={entry.name} className="text-sm" style={{ color: entry.color }}>
-          {entry.name}: {formatNumber(entry.value)}
-        </p>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {["requests", "errors", "tokens", "response-time"].map((name) => (
+        <div key={name} className="space-y-4">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-64 w-full" />
+        </div>
       ))}
     </div>
   );
 }
 
 /**
- * Loading skeleton for charts
+ * Skeleton for the entire MetricsCharts section.
+ * Exported for use as a Suspense fallback when this module itself is lazy-loaded.
  */
-function ChartSkeleton() {
-  return (
-    <div className="space-y-4">
-      <Skeleton className="h-6 w-48" />
-      <Skeleton className="h-64 w-full" />
-    </div>
-  );
-}
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 
 /**
- * Requests chart showing successful vs failed requests
- */
-function RequestsChart({ data }: { data: MetricsDataPoint[] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">API Requests</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-            <XAxis
-              dataKey="date"
-              tickFormatter={formatDate}
-              stroke="#71717a"
-              fontSize={12}
-            />
-            <YAxis
-              tickFormatter={formatNumber}
-              stroke="#71717a"
-              fontSize={12}
-            />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend />
-            <Bar
-              dataKey="successful"
-              name="Successful"
-              fill={CHART_COLORS.successful}
-              radius={[4, 4, 0, 0]}
-            />
-            <Bar
-              dataKey="failed"
-              name="Failed"
-              fill={CHART_COLORS.failed}
-              radius={[4, 4, 0, 0]}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Error rate chart
- */
-function ErrorRateChart({ data }: { data: MetricsDataPoint[] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Error Rate (%)</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-            <XAxis
-              dataKey="date"
-              tickFormatter={formatDate}
-              stroke="#71717a"
-              fontSize={12}
-            />
-            <YAxis
-              domain={[0, 100]}
-              tickFormatter={(v) => `${v}%`}
-              stroke="#71717a"
-              fontSize={12}
-            />
-            <Tooltip content={<CustomTooltip />} />
-            <Area
-              type="monotone"
-              dataKey="errorRate"
-              name="Error Rate"
-              stroke={CHART_COLORS.failed}
-              fill={CHART_COLORS.failed}
-              fillOpacity={0.3}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Tokens used chart
- */
-function TokensChart({ data }: { data: MetricsDataPoint[] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Tokens Used</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-            <XAxis
-              dataKey="date"
-              tickFormatter={formatDate}
-              stroke="#71717a"
-              fontSize={12}
-            />
-            <YAxis
-              tickFormatter={formatNumber}
-              stroke="#71717a"
-              fontSize={12}
-            />
-            <Tooltip content={<CustomTooltip />} />
-            <Area
-              type="monotone"
-              dataKey="tokensUsed"
-              name="Tokens"
-              stroke={CHART_COLORS.tokens}
-              fill={CHART_COLORS.tokens}
-              fillOpacity={0.3}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Average response time chart
- */
-function ResponseTimeChart({ data }: { data: MetricsDataPoint[] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Avg Response Time (ms)</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-            <XAxis
-              dataKey="date"
-              tickFormatter={formatDate}
-              stroke="#71717a"
-              fontSize={12}
-            />
-            <YAxis
-              tickFormatter={(v) => `${v}ms`}
-              stroke="#71717a"
-              fontSize={12}
-            />
-            <Tooltip content={<CustomTooltip />} />
-            <Area
-              type="monotone"
-              dataKey="avgDurationMs"
-              name="Avg Duration"
-              stroke={CHART_COLORS.duration}
-              fill={CHART_COLORS.duration}
-              fillOpacity={0.3}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * MetricsCharts component - displays all usage tracking charts
+ * MetricsCharts component - displays all usage tracking charts.
+ * Recharts is lazy-loaded on first render, keeping the initial bundle small.
  */
 export function MetricsCharts() {
   const [data, setData] = React.useState<MetricsDataPoint[]>([]);
@@ -314,7 +395,7 @@ export function MetricsCharts() {
     return (
       <Card>
         <CardContent className="py-12 text-center">
-          <p className="text-red">Failed to load metrics: {error}</p>
+          <p className="text-red-500">Failed to load metrics: {error}</p>
         </CardContent>
       </Card>
     );
@@ -341,19 +422,11 @@ export function MetricsCharts() {
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <ChartSkeleton />
-          <ChartSkeleton />
-          <ChartSkeleton />
-          <ChartSkeleton />
-        </div>
+        <ChartGridSkeleton />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <RequestsChart data={data} />
-          <ErrorRateChart data={data} />
-          <TokensChart data={data} />
-          <ResponseTimeChart data={data} />
-        </div>
+        <React.Suspense fallback={<ChartGridSkeleton />}>
+          <LazyChartGrid data={data} />
+        </React.Suspense>
       )}
     </div>
   );

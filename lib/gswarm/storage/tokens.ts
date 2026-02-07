@@ -1,11 +1,13 @@
 /**
- * Token Storage Service
+ * @file lib/gswarm/storage/tokens.ts
+ * @version 1.0
+ * @description OAuth token storage with caching and lifecycle management.
  *
  * Manages OAuth token persistence with caching, validation, and lifecycle operations.
  * Tokens are stored as JSON files in the oauth-tokens directory.
  */
 
-import * as path from "node:path";
+import { join } from "node:path";
 import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
 import type { StorageResult, StoredToken, TokenData } from "../types";
 import {
@@ -75,7 +77,7 @@ export function sanitizeEmail(email: string): string {
  */
 export function getTokenPath(email: string): string {
   const sanitized = sanitizeEmail(email);
-  return path.join(STORAGE_BASE_DIR, TOKENS_DIR, `${sanitized}.json`);
+  return join(STORAGE_BASE_DIR, TOKENS_DIR, `${sanitized}.json`);
 }
 
 /**
@@ -154,14 +156,21 @@ export async function loadAllTokens(): Promise<
     return { success: false, error: listResult.error };
   }
 
+  // Load all token files in parallel
+  const filenames = listResult.data.filter((f) => f !== ".gitkeep");
+  const settled = await Promise.allSettled(
+    filenames.map(async (filename) => {
+      const filePath = join(tokensDir, filename);
+      const readResult = await readJsonFile<StoredToken>(filePath);
+      return { filename, readResult };
+    }),
+  );
+
   const tokens = new Map<string, StoredToken>();
 
-  // Load each token file
-  for (const filename of listResult.data) {
-    if (filename === ".gitkeep") continue;
-
-    const filePath = path.join(tokensDir, filename);
-    const readResult = await readJsonFile<StoredToken>(filePath);
+  for (const result of settled) {
+    if (result.status !== "fulfilled") continue;
+    const { filename, readResult } = result.value;
 
     if (readResult.success) {
       const token = readResult.data;
@@ -233,20 +242,35 @@ export async function loadToken(
  * Saves a token to storage
  *
  * @param email - Email address to save token for
- * @param tokenData - Token data to save
+ * @param tokenData - Token data to save (can include client, projects)
+ * @param preserveMetadata - Whether to preserve existing client/projects from disk (default: true)
  * @returns The saved StoredToken
  */
 export async function saveToken(
   email: string,
   tokenData: TokenData,
+  preserveMetadata = true,
 ): Promise<StorageResult<StoredToken>> {
   const filePath = getTokenPath(email);
+
+  // Load existing token to preserve metadata if requested
+  let existingToken: StoredToken | undefined;
+  if (preserveMetadata) {
+    const loadResult = await loadToken(email);
+    if (loadResult.success) {
+      existingToken = loadResult.data;
+    }
+  }
 
   // Create StoredToken from TokenData
   const storedToken: StoredToken = {
     ...tokenData,
     email,
-    created_at: Math.floor(Date.now() / 1000),
+    created_at: existingToken?.created_at ?? Math.floor(Date.now() / 1000),
+    updated_at: Math.floor(Date.now() / 1000),
+    // Preserve metadata from existing token if not provided in tokenData
+    client: (tokenData as StoredToken).client ?? existingToken?.client,
+    projects: (tokenData as StoredToken).projects ?? existingToken?.projects,
   };
 
   // Calculate expiry_timestamp if not set
@@ -415,4 +439,83 @@ export async function getTokensNeedingRefresh(
 export function invalidateTokenCache(): void {
   tokenCacheManager.invalidate();
   consoleDebug(PREFIX.DEBUG, "Token cache invalidated");
+}
+
+/**
+ * Updates the projects array for a token
+ *
+ * @param email - Email address of the token
+ * @param projects - Array of GCP project IDs
+ * @returns Updated StoredToken
+ */
+export async function updateTokenProjects(
+  email: string,
+  projects: string[],
+): Promise<StorageResult<StoredToken>> {
+  const loadResult = await loadToken(email);
+
+  if (!loadResult.success) {
+    return { success: false, error: loadResult.error };
+  }
+
+  const token = loadResult.data;
+  token.projects = projects;
+  token.updated_at = Math.floor(Date.now() / 1000);
+
+  const filePath = getTokenPath(email);
+  const writeResult = await writeJsonFile(filePath, token);
+
+  if (!writeResult.success) {
+    return { success: false, error: writeResult.error };
+  }
+
+  // Update cache
+  const existingCache = getCachedTokens();
+  if (existingCache) {
+    existingCache.set(email, token);
+  }
+
+  consoleDebug(
+    PREFIX.DEBUG,
+    `Updated projects for ${email}: ${projects.length} projects`,
+  );
+  return { success: true, data: token };
+}
+
+/**
+ * Updates the client field for a token
+ *
+ * @param email - Email address of the token
+ * @param client - Client identifier (e.g., "gemini-cli", "pulsona")
+ * @returns Updated StoredToken
+ */
+export async function updateTokenClient(
+  email: string,
+  client: string,
+): Promise<StorageResult<StoredToken>> {
+  const loadResult = await loadToken(email);
+
+  if (!loadResult.success) {
+    return { success: false, error: loadResult.error };
+  }
+
+  const token = loadResult.data;
+  token.client = client;
+  token.updated_at = Math.floor(Date.now() / 1000);
+
+  const filePath = getTokenPath(email);
+  const writeResult = await writeJsonFile(filePath, token);
+
+  if (!writeResult.success) {
+    return { success: false, error: writeResult.error };
+  }
+
+  // Update cache
+  const existingCache = getCachedTokens();
+  if (existingCache) {
+    existingCache.set(email, token);
+  }
+
+  consoleDebug(PREFIX.DEBUG, `Updated client for ${email}: ${client}`);
+  return { success: true, data: token };
 }

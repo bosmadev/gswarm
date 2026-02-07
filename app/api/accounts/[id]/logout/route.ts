@@ -1,5 +1,6 @@
 /**
  * @file app/api/accounts/[id]/logout/route.ts
+ * @version 1.0
  * @description Admin API route for logging out an account.
  * Removes the OAuth token for the specified account.
  *
@@ -9,6 +10,7 @@
 import { unlink } from "node:fs/promises";
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import {
   getDataPath,
   listFiles,
@@ -36,7 +38,7 @@ interface RouteParams {
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -87,6 +89,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ error: "Account not found" }, { status: 404 });
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] POST /api/accounts/[id]/logout failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
         error: "Failed to logout account",

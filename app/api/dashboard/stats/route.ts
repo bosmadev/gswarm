@@ -3,11 +3,13 @@
  * @description API route for fetching dashboard statistics.
  * Returns aggregated counts and metrics for the dashboard overview.
  *
+ * @version 1.0
  * @module app/api/dashboard/stats
  */
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 import {
   getDataPath,
   listFiles,
@@ -44,7 +46,7 @@ interface DashboardStats {
  */
 export async function GET(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -105,6 +107,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(stats);
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] GET /api/dashboard/stats failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
         error: "Failed to fetch dashboard statistics",

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { JetBrains_Mono, Nunito } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 import {
@@ -7,15 +8,19 @@ import {
   ConfirmationProvider,
   FontProvider,
   NotificationProvider,
+  ReactGrabProvider,
   ThemeProvider,
 } from "@/components/providers";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
+// DEBUG mode gate — only true when DEBUG=true is set (launch script Option 1)
+const isDebug = process.env.DEBUG === "true" || process.env.DEBUG === "1";
+
 // Optimized Google Fonts via next/font (self-hosted, no external requests)
-const inter = Inter({
+const nunito = Nunito({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-nunito",
   display: "swap",
 });
 
@@ -26,9 +31,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GSwarm API",
-  description:
-    "Centralized GSwarm AI proxy service with OAuth token management and project rotation",
+  title: process.env.GLOBAL_APP_DISPLAY_NAME,
+  description: process.env.GLOBAL_APP_DESCRIPTION,
 };
 
 export default function RootLayout({
@@ -38,8 +42,24 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${inter.variable} ${jetbrainsMono.variable}`}
+      className={`${nunito.variable} ${jetbrainsMono.variable}`}
     >
+      <head>
+        {isDebug && (
+          <>
+            <Script
+              src="//unpkg.com/react-grab/dist/index.global.js"
+              crossOrigin="anonymous"
+              strategy="beforeInteractive"
+            />
+            <Script
+              src="//unpkg.com/@react-grab/claude-code/dist/client.global.js"
+              crossOrigin="anonymous"
+              strategy="lazyOnload"
+            />
+          </>
+        )}
+      </head>
       <body>
         <ThemeProvider defaultTheme="dark" storageKey="app-theme">
           <FontProvider>
@@ -47,8 +67,10 @@ export default function RootLayout({
               <NotificationProvider>
                 <ConfirmationProvider>
                   <CommandPaletteProvider>
-                    {children}
-                    <Toaster />
+                    <ReactGrabProvider>
+                      {children}
+                      <Toaster />
+                    </ReactGrabProvider>
                   </CommandPaletteProvider>
                 </ConfirmationProvider>
               </NotificationProvider>

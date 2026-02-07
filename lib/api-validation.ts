@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import type { ApiValidationError, ApiValidationResult } from "./types";
 
 /**
- * Validates required fields exist in request body
+ * Validates that required fields exist in the request body.
+ *
+ * @param body - The parsed request body object
+ * @param requiredFields - Array of field names that must be present
+ * @returns Validation result with data on success, or errors on failure
  */
 function validateRequired<T extends Record<string, unknown>>(
   body: T,
@@ -25,7 +29,12 @@ function validateRequired<T extends Record<string, unknown>>(
 }
 
 /**
- * Validates field types
+ * Validates that field values match their expected types.
+ * Skips undefined/null values (handled by validateRequired).
+ *
+ * @param body - The parsed request body object
+ * @param typeMap - Map of field names to expected types ("string", "number", "boolean", "object", "array")
+ * @returns Validation result with data on success, or errors on failure
  */
 function validateTypes<T extends Record<string, unknown>>(
   body: T,
@@ -75,7 +84,12 @@ function validateTypes<T extends Record<string, unknown>>(
 }
 
 /**
- * Validates enum values
+ * Validates that a field value is one of the allowed values.
+ *
+ * @param body - The parsed request body object
+ * @param field - The field name to validate
+ * @param allowedValues - Array of allowed values for the field
+ * @returns Validation result with data on success, or errors on failure
  */
 export function validateEnum<T extends Record<string, unknown>>(
   body: T,
@@ -99,7 +113,14 @@ export function validateEnum<T extends Record<string, unknown>>(
 }
 
 /**
- * Validates numeric ranges
+ * Validates that a numeric field is within the specified range.
+ * Skips non-numeric values.
+ *
+ * @param body - The parsed request body object
+ * @param field - The field name to validate
+ * @param min - Minimum allowed value (inclusive)
+ * @param max - Maximum allowed value (inclusive)
+ * @returns Validation result with data on success, or errors on failure
  */
 function validateRange<T extends Record<string, unknown>>(
   body: T,
@@ -135,7 +156,14 @@ function validateRange<T extends Record<string, unknown>>(
 }
 
 /**
- * Validates string patterns (regex)
+ * Validates that a string field matches a regular expression pattern.
+ * Skips non-string values.
+ *
+ * @param body - The parsed request body object
+ * @param field - The field name to validate
+ * @param pattern - Regular expression the field value must match
+ * @param message - Optional custom error message
+ * @returns Validation result with data on success, or errors on failure
  */
 export function validatePattern<T extends Record<string, unknown>>(
   body: T,
@@ -164,7 +192,11 @@ export function validatePattern<T extends Record<string, unknown>>(
 }
 
 /**
- * Combines multiple validation results
+ * Combines multiple validation results into a single result.
+ * Aggregates all errors from failed validations.
+ *
+ * @param results - Validation results to combine
+ * @returns Combined validation result with all errors, or success with data
  */
 function combineValidations<T>(
   ...results: ApiValidationResult<T>[]
@@ -193,7 +225,10 @@ function combineValidations<T>(
 }
 
 /**
- * Creates a validation error response
+ * Creates a standardized validation error response (HTTP 400).
+ *
+ * @param errors - Array of validation error details
+ * @returns NextResponse with status 400 and error details
  */
 export function validationErrorResponse(
   errors: ApiValidationError[],
@@ -210,7 +245,20 @@ export function validationErrorResponse(
 }
 
 /**
- * Safely parses JSON request body with error handling
+ * Safely parses JSON request body with error handling.
+ * Returns a structured result instead of throwing on parse failure.
+ *
+ * @param request - The incoming HTTP request
+ * @returns Object with success flag, parsed data, or error message
+ *
+ * @example
+ * ```ts
+ * const result = await safeParseBody<MyType>(request);
+ * if (!result.success) {
+ *   return NextResponse.json({ error: result.error }, { status: 400 });
+ * }
+ * const data = result.data;
+ * ```
  */
 export async function safeParseBody<T = unknown>(
   request: Request,
@@ -228,7 +276,24 @@ export async function safeParseBody<T = unknown>(
 }
 
 /**
- * Type-safe request body parser with validation
+ * Type-safe request body parser with comprehensive validation.
+ * Parses JSON body and validates required fields, types, enums, ranges, and patterns.
+ *
+ * @param request - The incoming HTTP request
+ * @param options - Validation configuration with required fields, types, enums, ranges, and patterns
+ * @returns Success with validated data, or failure with a pre-built error response
+ *
+ * @example
+ * ```ts
+ * const result = await parseAndValidate<MyBody>(request, {
+ *   required: ["name", "email"],
+ *   types: { name: "string", email: "string", age: "number" },
+ *   ranges: { age: { min: 0, max: 150 } },
+ *   patterns: { email: { regex: /@/, message: "Must be a valid email" } },
+ * });
+ * if (!result.success) return result.response;
+ * const { name, email, age } = result.data;
+ * ```
  */
 export async function parseAndValidate<T extends Record<string, unknown>>(
   request: Request,

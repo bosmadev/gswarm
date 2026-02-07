@@ -115,6 +115,7 @@ export default {
        */
       animation: {
         glow: "glow 2s ease-in-out infinite",
+        "text-glow": "text-glow 2s ease-in-out infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "collapsible-down": "collapsible-down 0.2s ease-out",
@@ -132,6 +133,16 @@ export default {
           "50%": {
             boxShadow:
               "0 0 30px rgba(100, 116, 139, 0.3), 0 0 40px rgba(100, 116, 139, 0.2)",
+          },
+        },
+        "text-glow": {
+          "0%, 100%": {
+            textShadow:
+              "0 0 4px rgba(251, 146, 60, 0.3), 0 0 8px rgba(251, 146, 60, 0.15)",
+          },
+          "50%": {
+            textShadow:
+              "0 0 8px rgba(251, 146, 60, 0.5), 0 0 16px rgba(251, 146, 60, 0.25), 0 0 24px rgba(251, 146, 60, 0.1)",
           },
         },
         "accordion-down": {

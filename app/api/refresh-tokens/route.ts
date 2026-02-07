@@ -1,7 +1,7 @@
 /**
- * POST /api/refresh-tokens
- *
- * Manual token refresh endpoint.
+ * @file app/api/refresh-tokens/route.ts
+ * @version 1.0
+ * @description Manual token refresh endpoint.
  * Triggers a refresh cycle for all tokens needing refresh,
  * or refreshes a specific token by email.
  */

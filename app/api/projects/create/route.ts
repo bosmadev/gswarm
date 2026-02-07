@@ -1,5 +1,6 @@
 /**
  * @file app/api/projects/create/route.ts
+ * @version 1.0
  * @description Admin API route for getting GCP console URL for creating projects.
  * Returns the console URL for bulk enabling APIs on GCP projects.
  *
@@ -8,6 +9,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleError } from "@/lib/console";
 
 /**
  * Gets the GCP Console URL for bulk enabling APIs
@@ -38,7 +40,7 @@ function getBulkConsoleEnableUrl(): string {
  */
 export async function POST(request: NextRequest) {
   // Validate admin session
-  const session = validateAdminSession(request);
+  const session = await validateAdminSession(request);
   if (!session.valid) {
     return NextResponse.json(
       { error: "Unauthorized", message: session.error },
@@ -53,6 +55,10 @@ export async function POST(request: NextRequest) {
       consoleUrl,
     });
   } catch (error) {
+    consoleError(
+      PREFIX.ERROR,
+      `[API] POST /api/projects/create failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
         error: "Failed to generate console URL",

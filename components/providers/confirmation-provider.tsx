@@ -83,7 +83,7 @@ export function ConfirmationProvider({ children }: ConfirmationProviderProps) {
   const getButtonVariant = (type?: "warning" | "danger" | "info") => {
     switch (type) {
       case "danger":
-        return "bg-red hover:bg-red/90 text-white";
+        return "bg-red-500 hover:bg-red-500/90 text-white";
       case "warning":
         return "bg-orange hover:bg-orange/90 text-white";
       case "info":
@@ -96,7 +96,7 @@ export function ConfirmationProvider({ children }: ConfirmationProviderProps) {
   const getIcon = (type?: "warning" | "danger" | "info") => {
     switch (type) {
       case "danger":
-        return <XCircle className="w-5 h-5 text-red" />;
+        return <XCircle className="w-5 h-5 text-red-500" />;
       case "warning":
         return <AlertTriangle className="w-5 h-5 text-orange" />;
       case "info":
@@ -109,7 +109,7 @@ export function ConfirmationProvider({ children }: ConfirmationProviderProps) {
   const getIconBg = (type?: "warning" | "danger" | "info") => {
     switch (type) {
       case "danger":
-        return "bg-red/10";
+        return "bg-red-500/10";
       case "warning":
         return "bg-orange/10";
       case "info":
