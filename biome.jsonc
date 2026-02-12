@@ -54,7 +54,8 @@
       "includes": [
         "lib/console.ts",
         "scripts/launch.ts",
-        "python/sync-pyproject.ts"
+        "python/sync-pyproject.ts",
+        ".github/changelog.ts"
       ],
       "linter": {
         "rules": {
