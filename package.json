@@ -1,13 +1,13 @@
 {
-  "name": "gswarm-api",
-  "displayName": "GSwarm API",
+  "name": "gswarm",
+  "displayName": "GSwarm",
   "description": "Gemini Swarm API Proxy",
   "version": "1.0.3",
   "publisher": "bosmadev",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/bosmadev/gswarm-api"
+    "url": "https://github.com/bosmadev/gswarm"
   },
   "type": "module",
   "scripts": {
@@ -51,7 +51,9 @@
     "rimraf:next": "rimraf .next node_modules/.cache",
     "env:encrypt": "dotenvx encrypt",
     "env:decrypt": "dotenvx decrypt",
-    "env:check": "grep -q \"^#/-------------------\\[DOTENV\" .env && echo \"✅ .env encrypted\" || echo \"❌ .env NOT encrypted\"",
+    "env:check": "node -e \"const f=require('fs').readFileSync('.env','utf8'); process.exit(f.includes('encrypted:') ? (console.log('✅ .env encrypted'),0) : (console.log('❌ .env NOT encrypted'),1))\"",
+    "env:backup": "node -e \"const k=require('fs').readFileSync('.env.keys','utf8').match(/DOTENV_PRIVATE_KEY=(.+)/)?.[1]; if(!k){console.error('❌ No .env.keys found');process.exit(1)} require('child_process').execSync('gh secret set DOTENV_PRIVATE_KEY --body '+k,{stdio:'inherit'}); console.log('✅ Backed up to GitHub Secrets')\"",
+    "env:restore": "node -e \"const {execSync}=require('child_process'); console.log('Triggering restore workflow...'); execSync('gh workflow run restore-env-keys.yml',{stdio:'inherit'}); console.log('⏳ Workflow triggered. Run: gh run watch && gh run download -n env-keys && mv env-keys.txt .env.keys')\"",
     "prepare": "husky"
   },
   "dependencies": {
