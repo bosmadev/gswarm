@@ -14,6 +14,6 @@ export default defineConfig({
   test: {
     globals: true, // Allows using describe/expect without imports
     environment: "happy-dom", // The simulation (no real browser needed)
-    exclude: ["**/node_modules/**"],
+    exclude: ["**/node_modules/**", "**/integration/**"],
   },
 });

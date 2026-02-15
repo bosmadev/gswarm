@@ -1,12 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {
-  getProjectSelectionStats,
-  markProjectUsed,
-  selectProject,
-  selectProjectForRequest,
-} from "../../lru-selector";
 
 interface TokenFile {
   access_token: string;
@@ -94,8 +88,8 @@ describe("LRU Project Rotation Integration", () => {
 
   it("should maintain LRU order after marking usage", () => {
     const project1 = selector.select();
-    const project2 = selector.select();
-    const project3 = selector.select();
+    selector.select();
+    selector.select();
 
     // Mark project1 as used (moves to end)
     selector.markUsed(project1);
