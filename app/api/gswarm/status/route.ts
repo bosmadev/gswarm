@@ -114,9 +114,7 @@ export async function GET(request: NextRequest) {
 
     // Get valid tokens
     const validTokensResult = await getValidTokens();
-    const validTokens = validTokensResult.success
-      ? validTokensResult.data
-      : [];
+    const validTokens = validTokensResult.success ? validTokensResult.data : [];
 
     // Get all projects
     const projectsResult = await getEnabledProjects();

@@ -43,19 +43,19 @@ let configuredLockTimeoutMs: number = DEFAULT_LOCK_TIMEOUT_MS;
  * @param timeoutMs - Timeout in milliseconds (must be > 0)
  */
 export function setLockTimeout(timeoutMs: number): void {
-	if (timeoutMs <= 0) {
-		throw new GSwarmConfigError("Lock timeout must be a positive number", {
-			configKey: "lockTimeout",
-		});
-	}
-	configuredLockTimeoutMs = timeoutMs;
+  if (timeoutMs <= 0) {
+    throw new GSwarmConfigError("Lock timeout must be a positive number", {
+      configKey: "lockTimeout",
+    });
+  }
+  configuredLockTimeoutMs = timeoutMs;
 }
 
 /**
  * Get the currently configured operation timeout.
  */
 export function getLockTimeout(): number {
-	return configuredLockTimeoutMs;
+  return configuredLockTimeoutMs;
 }
 
 // =============================================================================
@@ -73,36 +73,36 @@ export function getLockTimeout(): number {
  * - `cache.invalidate()` → `redis.del(key)`
  */
 export class CacheManager<T> {
-	private cache: T | null = null;
-	private cacheTime = 0;
+  private cache: T | null = null;
+  private cacheTime = 0;
 
-	constructor(private ttlMs: number) {
-		consoleDebug(
-			PREFIX.DEBUG,
-			"[DEPRECATED] CacheManager instantiated - consider migrating to Redis TTL",
-		);
-	}
+  constructor(private ttlMs: number) {
+    consoleDebug(
+      PREFIX.DEBUG,
+      "[DEPRECATED] CacheManager instantiated - consider migrating to Redis TTL",
+    );
+  }
 
-	get(): T | null {
-		if (this.cache && Date.now() - this.cacheTime < this.ttlMs) {
-			return this.cache;
-		}
-		return null;
-	}
+  get(): T | null {
+    if (this.cache && Date.now() - this.cacheTime < this.ttlMs) {
+      return this.cache;
+    }
+    return null;
+  }
 
-	set(data: T): void {
-		this.cache = data;
-		this.cacheTime = Date.now();
-	}
+  set(data: T): void {
+    this.cache = data;
+    this.cacheTime = Date.now();
+  }
 
-	invalidate(): void {
-		this.cache = null;
-		this.cacheTime = 0;
-	}
+  invalidate(): void {
+    this.cache = null;
+    this.cacheTime = 0;
+  }
 
-	isValid(): boolean {
-		return this.cache !== null && Date.now() - this.cacheTime < this.ttlMs;
-	}
+  isValid(): boolean {
+    return this.cache !== null && Date.now() - this.cacheTime < this.ttlMs;
+  }
 }
 
 // =============================================================================
@@ -113,11 +113,11 @@ export class CacheManager<T> {
  * Get today's date as YYYY-MM-DD string
  */
 export function getTodayDateString(): string {
-	const datePart = new Date().toISOString().split("T")[0];
-	if (!datePart) {
-		return new Date().toISOString().slice(0, 10);
-	}
-	return datePart;
+  const datePart = new Date().toISOString().split("T")[0];
+  if (!datePart) {
+    return new Date().toISOString().slice(0, 10);
+  }
+  return datePart;
 }
 
 /**
@@ -131,7 +131,7 @@ export function getTodayDateString(): string {
  * @returns Logical path string (used as Redis key prefix)
  */
 export function getDataPath(...segments: string[]): string {
-	return segments.join("/");
+  return segments.join("/");
 }
 
 /**
@@ -140,7 +140,7 @@ export function getDataPath(...segments: string[]): string {
  * @deprecated Use getDataPath() instead
  */
 export function getStoragePath(...segments: string[]): string {
-	return getDataPath(...segments);
+  return getDataPath(...segments);
 }
 
 // =============================================================================
@@ -151,10 +151,10 @@ export function getStoragePath(...segments: string[]): string {
  * Options for reading JSON from Redis
  */
 interface ReadJsonOptions {
-	/** @deprecated Redis handles caching natively - this option is ignored */
-	useCache?: boolean;
-	/** @deprecated Redis handles TTL natively - this option is ignored */
-	cacheTtlMs?: number;
+  /** @deprecated Redis handles caching natively - this option is ignored */
+  useCache?: boolean;
+  /** @deprecated Redis handles TTL natively - this option is ignored */
+  cacheTtlMs?: number;
 }
 
 /**
@@ -168,51 +168,51 @@ interface ReadJsonOptions {
  * @returns StorageResult with parsed data or error
  */
 export async function readJsonFile<T>(
-	key: string,
-	options: ReadJsonOptions = {},
+  key: string,
+  _options: ReadJsonOptions = {},
 ): Promise<StorageResult<T>> {
-	try {
-		const redis = getRedisClient();
-		const data = await redis.get(key);
+  try {
+    const redis = getRedisClient();
+    const data = await redis.get(key);
 
-		if (data === null) {
-			return {
-				success: false,
-				error: `Key not found: ${key}`,
-			};
-		}
+    if (data === null) {
+      return {
+        success: false,
+        error: `Key not found: ${key}`,
+      };
+    }
 
-		const parsed = JSON.parse(data) as T;
-		return { success: true, data: parsed };
-	} catch (error) {
-		const err = error as Error;
+    const parsed = JSON.parse(data) as T;
+    return { success: true, data: parsed };
+  } catch (error) {
+    const err = error as Error;
 
-		if (err instanceof SyntaxError) {
-			consoleError(PREFIX.ERROR, `Invalid JSON in key: ${key}`);
-			return {
-				success: false,
-				error: `Invalid JSON in key: ${key}`,
-			};
-		}
+    if (err instanceof SyntaxError) {
+      consoleError(PREFIX.ERROR, `Invalid JSON in key: ${key}`);
+      return {
+        success: false,
+        error: `Invalid JSON in key: ${key}`,
+      };
+    }
 
-		consoleError(PREFIX.ERROR, `Failed to read key: ${key}`, err.message);
-		return {
-			success: false,
-			error: `Failed to read key: ${err.message}`,
-		};
-	}
+    consoleError(PREFIX.ERROR, `Failed to read key: ${key}`, err.message);
+    return {
+      success: false,
+      error: `Failed to read key: ${err.message}`,
+    };
+  }
 }
 
 /**
  * Options for writing JSON to Redis
  */
 interface WriteJsonOptions {
-	/** @deprecated Redis doesn't need pretty-printing - this option is ignored */
-	pretty?: boolean;
-	/** @deprecated Redis handles cache invalidation automatically - this option is ignored */
-	invalidateCache?: boolean;
-	/** TTL in seconds for Redis key expiration (optional) */
-	ttlSeconds?: number;
+  /** @deprecated Redis doesn't need pretty-printing - this option is ignored */
+  pretty?: boolean;
+  /** @deprecated Redis handles cache invalidation automatically - this option is ignored */
+  invalidateCache?: boolean;
+  /** TTL in seconds for Redis key expiration (optional) */
+  ttlSeconds?: number;
 }
 
 /**
@@ -227,33 +227,33 @@ interface WriteJsonOptions {
  * @returns StorageResult indicating success or error
  */
 export async function writeJsonFile<T>(
-	key: string,
-	data: T,
-	options: WriteJsonOptions = {},
+  key: string,
+  data: T,
+  options: WriteJsonOptions = {},
 ): Promise<StorageResult<void>> {
-	const { ttlSeconds } = options;
+  const { ttlSeconds } = options;
 
-	try {
-		const redis = getRedisClient();
-		const content = JSON.stringify(data);
+  try {
+    const redis = getRedisClient();
+    const content = JSON.stringify(data);
 
-		if (ttlSeconds !== undefined && ttlSeconds > 0) {
-			await redis.set(key, content, "EX", ttlSeconds);
-		} else {
-			await redis.set(key, content);
-		}
+    if (ttlSeconds !== undefined && ttlSeconds > 0) {
+      await redis.set(key, content, "EX", ttlSeconds);
+    } else {
+      await redis.set(key, content);
+    }
 
-		consoleDebug(PREFIX.DEBUG, `Key written: ${key}`);
-		return { success: true, data: undefined };
-	} catch (error) {
-		const err = error as Error;
-		consoleError(PREFIX.ERROR, `Failed to write key: ${key}`, err.message);
+    consoleDebug(PREFIX.DEBUG, `Key written: ${key}`);
+    return { success: true, data: undefined };
+  } catch (error) {
+    const err = error as Error;
+    consoleError(PREFIX.ERROR, `Failed to write key: ${key}`, err.message);
 
-		return {
-			success: false,
-			error: `Failed to write key: ${err.message}`,
-		};
-	}
+    return {
+      success: false,
+      error: `Failed to write key: ${err.message}`,
+    };
+  }
 }
 
 /**
@@ -263,19 +263,19 @@ export async function writeJsonFile<T>(
  * @returns StorageResult indicating success or error
  */
 export async function deleteFile(key: string): Promise<StorageResult<void>> {
-	try {
-		const redis = getRedisClient();
-		await redis.del(key);
-		consoleDebug(PREFIX.DEBUG, `Key deleted: ${key}`);
-		return { success: true, data: undefined };
-	} catch (error) {
-		const err = error as Error;
-		consoleError(PREFIX.ERROR, `Failed to delete key: ${key}`, err.message);
-		return {
-			success: false,
-			error: `Failed to delete key: ${err.message}`,
-		};
-	}
+  try {
+    const redis = getRedisClient();
+    await redis.del(key);
+    consoleDebug(PREFIX.DEBUG, `Key deleted: ${key}`);
+    return { success: true, data: undefined };
+  } catch (error) {
+    const err = error as Error;
+    consoleError(PREFIX.ERROR, `Failed to delete key: ${key}`, err.message);
+    return {
+      success: false,
+      error: `Failed to delete key: ${err.message}`,
+    };
+  }
 }
 
 /**
@@ -289,46 +289,46 @@ export async function deleteFile(key: string): Promise<StorageResult<void>> {
  * @returns StorageResult with array of matching keys
  */
 export async function listFiles(
-	pattern: string,
-	extension?: string,
+  pattern: string,
+  extension?: string,
 ): Promise<StorageResult<string[]>> {
-	try {
-		const redis = getRedisClient();
-		const keys: string[] = [];
+  try {
+    const redis = getRedisClient();
+    const keys: string[] = [];
 
-		// Use SCAN for safe iteration (no blocking)
-		let cursor = "0";
-		do {
-			const [newCursor, matchedKeys] = await redis.scan(
-				cursor,
-				"MATCH",
-				pattern,
-				"COUNT",
-				100,
-			);
-			cursor = newCursor;
-			keys.push(...matchedKeys);
-		} while (cursor !== "0");
+    // Use SCAN for safe iteration (no blocking)
+    let cursor = "0";
+    do {
+      const [newCursor, matchedKeys] = await redis.scan(
+        cursor,
+        "MATCH",
+        pattern,
+        "COUNT",
+        100,
+      );
+      cursor = newCursor;
+      keys.push(...matchedKeys);
+    } while (cursor !== "0");
 
-		// Apply extension filter if provided
-		let filtered = keys;
-		if (extension) {
-			filtered = keys.filter((key) => key.endsWith(extension));
-		}
+    // Apply extension filter if provided
+    let filtered = keys;
+    if (extension) {
+      filtered = keys.filter((key) => key.endsWith(extension));
+    }
 
-		return { success: true, data: filtered };
-	} catch (error) {
-		const err = error as Error;
-		consoleError(
-			PREFIX.ERROR,
-			`Failed to list keys matching: ${pattern}`,
-			err.message,
-		);
-		return {
-			success: false,
-			error: `Failed to list keys: ${err.message}`,
-		};
-	}
+    return { success: true, data: filtered };
+  } catch (error) {
+    const err = error as Error;
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to list keys matching: ${pattern}`,
+      err.message,
+    );
+    return {
+      success: false,
+      error: `Failed to list keys: ${err.message}`,
+    };
+  }
 }
 
 /**
@@ -338,22 +338,22 @@ export async function listFiles(
  * @returns StorageResult with boolean indicating existence
  */
 export async function fileExists(key: string): Promise<StorageResult<boolean>> {
-	try {
-		const redis = getRedisClient();
-		const exists = await redis.exists(key);
-		return { success: true, data: exists === 1 };
-	} catch (error) {
-		const err = error as Error;
-		consoleError(
-			PREFIX.ERROR,
-			`Failed to check key existence: ${key}`,
-			err.message,
-		);
-		return {
-			success: false,
-			error: `Failed to check key existence: ${err.message}`,
-		};
-	}
+  try {
+    const redis = getRedisClient();
+    const exists = await redis.exists(key);
+    return { success: true, data: exists === 1 };
+  } catch (error) {
+    const err = error as Error;
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to check key existence: ${key}`,
+      err.message,
+    );
+    return {
+      success: false,
+      error: `Failed to check key existence: ${err.message}`,
+    };
+  }
 }
 
 /**
@@ -364,8 +364,8 @@ export async function fileExists(key: string): Promise<StorageResult<boolean>> {
  * @deprecated Prefer fileExists() which returns StorageResult for proper error handling
  */
 export async function fileExistsSimple(key: string): Promise<boolean> {
-	const result = await fileExists(key);
-	return result.success ? result.data : false;
+  const result = await fileExists(key);
+  return result.success ? result.data : false;
 }
 
 // =============================================================================
@@ -379,28 +379,28 @@ export async function fileExistsSimple(key: string): Promise<boolean> {
  * @returns StorageResult with hash object or error
  */
 export async function readHash<T extends Record<string, string>>(
-	key: string,
+  key: string,
 ): Promise<StorageResult<T>> {
-	try {
-		const redis = getRedisClient();
-		const data = await redis.hgetall(key);
+  try {
+    const redis = getRedisClient();
+    const data = await redis.hgetall(key);
 
-		if (Object.keys(data).length === 0) {
-			return {
-				success: false,
-				error: `Hash not found: ${key}`,
-			};
-		}
+    if (Object.keys(data).length === 0) {
+      return {
+        success: false,
+        error: `Hash not found: ${key}`,
+      };
+    }
 
-		return { success: true, data: data as T };
-	} catch (error) {
-		const err = error as Error;
-		consoleError(PREFIX.ERROR, `Failed to read hash: ${key}`, err.message);
-		return {
-			success: false,
-			error: `Failed to read hash: ${err.message}`,
-		};
-	}
+    return { success: true, data: data as T };
+  } catch (error) {
+    const err = error as Error;
+    consoleError(PREFIX.ERROR, `Failed to read hash: ${key}`, err.message);
+    return {
+      success: false,
+      error: `Failed to read hash: ${err.message}`,
+    };
+  }
 }
 
 /**
@@ -412,28 +412,28 @@ export async function readHash<T extends Record<string, string>>(
  * @returns StorageResult indicating success or error
  */
 export async function writeHash<T extends Record<string, string>>(
-	key: string,
-	data: T,
-	ttlSeconds?: number,
+  key: string,
+  data: T,
+  ttlSeconds?: number,
 ): Promise<StorageResult<void>> {
-	try {
-		const redis = getRedisClient();
-		await redis.hset(key, data);
+  try {
+    const redis = getRedisClient();
+    await redis.hset(key, data);
 
-		if (ttlSeconds !== undefined && ttlSeconds > 0) {
-			await redis.expire(key, ttlSeconds);
-		}
+    if (ttlSeconds !== undefined && ttlSeconds > 0) {
+      await redis.expire(key, ttlSeconds);
+    }
 
-		consoleDebug(PREFIX.DEBUG, `Hash written: ${key}`);
-		return { success: true, data: undefined };
-	} catch (error) {
-		const err = error as Error;
-		consoleError(PREFIX.ERROR, `Failed to write hash: ${key}`, err.message);
-		return {
-			success: false,
-			error: `Failed to write hash: ${err.message}`,
-		};
-	}
+    consoleDebug(PREFIX.DEBUG, `Hash written: ${key}`);
+    return { success: true, data: undefined };
+  } catch (error) {
+    const err = error as Error;
+    consoleError(PREFIX.ERROR, `Failed to write hash: ${key}`, err.message);
+    return {
+      success: false,
+      error: `Failed to write hash: ${err.message}`,
+    };
+  }
 }
 
 // =============================================================================
@@ -445,11 +445,11 @@ export async function writeHash<T extends Record<string, string>>(
  * This function is a no-op kept for backward compatibility.
  */
 export async function ensureDir(dirPath: string): Promise<StorageResult<void>> {
-	consoleDebug(
-		PREFIX.DEBUG,
-		`[DEPRECATED] ensureDir called with ${dirPath} - no-op in Redis storage`,
-	);
-	return { success: true, data: undefined };
+  consoleDebug(
+    PREFIX.DEBUG,
+    `[DEPRECATED] ensureDir called with ${dirPath} - no-op in Redis storage`,
+  );
+  return { success: true, data: undefined };
 }
 
 /**
@@ -457,24 +457,22 @@ export async function ensureDir(dirPath: string): Promise<StorageResult<void>> {
  * This function is a no-op kept for backward compatibility.
  */
 export async function ensureDataStructure(): Promise<StorageResult<void>> {
-	consoleLog(
-		PREFIX.INFO,
-		"[DEPRECATED] ensureDataStructure called - no-op in Redis storage",
-	);
-	return { success: true, data: undefined };
+  consoleLog(
+    PREFIX.INFO,
+    "[DEPRECATED] ensureDataStructure called - no-op in Redis storage",
+  );
+  return { success: true, data: undefined };
 }
 
 /**
  * @deprecated File stats are not applicable to Redis keys.
  * This function throws an error.
  */
-export async function getFileStats(
-	key: string,
-): Promise<StorageResult<never>> {
-	return {
-		success: false,
-		error: `getFileStats is not supported in Redis storage. Use redis.exists("${key}") instead.`,
-	};
+export async function getFileStats(key: string): Promise<StorageResult<never>> {
+  return {
+    success: false,
+    error: `getFileStats is not supported in Redis storage. Use redis.exists("${key}") instead.`,
+  };
 }
 
 /**
@@ -482,14 +480,14 @@ export async function getFileStats(
  * This function is a no-op that always succeeds.
  */
 export async function acquireLock(
-	key: string,
-	timeout?: number,
+  key: string,
+  _timeout?: number,
 ): Promise<boolean> {
-	consoleDebug(
-		PREFIX.DEBUG,
-		`[DEPRECATED] acquireLock called for ${key} - no-op in Redis storage`,
-	);
-	return true;
+  consoleDebug(
+    PREFIX.DEBUG,
+    `[DEPRECATED] acquireLock called for ${key} - no-op in Redis storage`,
+  );
+  return true;
 }
 
 /**
@@ -497,10 +495,10 @@ export async function acquireLock(
  * This function is a no-op.
  */
 export function releaseLock(key: string): void {
-	consoleDebug(
-		PREFIX.DEBUG,
-		`[DEPRECATED] releaseLock called for ${key} - no-op in Redis storage`,
-	);
+  consoleDebug(
+    PREFIX.DEBUG,
+    `[DEPRECATED] releaseLock called for ${key} - no-op in Redis storage`,
+  );
 }
 
 /**
@@ -508,22 +506,22 @@ export function releaseLock(key: string): void {
  * This function is a no-op.
  */
 export function getFromCache<T>(key: string): T | undefined {
-	consoleDebug(
-		PREFIX.DEBUG,
-		`[DEPRECATED] getFromCache called for ${key} - use Redis GET directly`,
-	);
-	return undefined;
+  consoleDebug(
+    PREFIX.DEBUG,
+    `[DEPRECATED] getFromCache called for ${key} - use Redis GET directly`,
+  );
+  return undefined;
 }
 
 /**
  * @deprecated Redis handles caching natively via TTL.
  * This function is a no-op.
  */
-export function setCache<T>(key: string, data: T, ttlMs: number): void {
-	consoleDebug(
-		PREFIX.DEBUG,
-		`[DEPRECATED] setCache called for ${key} - use Redis SET with EX flag directly`,
-	);
+export function setCache<T>(key: string, _data: T, _ttlMs: number): void {
+  consoleDebug(
+    PREFIX.DEBUG,
+    `[DEPRECATED] setCache called for ${key} - use Redis SET with EX flag directly`,
+  );
 }
 
 /**
@@ -531,10 +529,10 @@ export function setCache<T>(key: string, data: T, ttlMs: number): void {
  * This function is a no-op.
  */
 export function invalidateCache(key: string): void {
-	consoleDebug(
-		PREFIX.DEBUG,
-		`[DEPRECATED] invalidateCache called for ${key} - use redis.del() directly`,
-	);
+  consoleDebug(
+    PREFIX.DEBUG,
+    `[DEPRECATED] invalidateCache called for ${key} - use redis.del() directly`,
+  );
 }
 
 /**
@@ -542,10 +540,10 @@ export function invalidateCache(key: string): void {
  * This function is a no-op.
  */
 export function invalidateCachePattern(pattern: RegExp): void {
-	consoleDebug(
-		PREFIX.DEBUG,
-		`[DEPRECATED] invalidateCachePattern called with ${pattern} - use Redis SCAN + DEL directly`,
-	);
+  consoleDebug(
+    PREFIX.DEBUG,
+    `[DEPRECATED] invalidateCachePattern called with ${pattern} - use Redis SCAN + DEL directly`,
+  );
 }
 
 /**
@@ -553,10 +551,10 @@ export function invalidateCachePattern(pattern: RegExp): void {
  * This function is a no-op.
  */
 export function clearCache(): void {
-	consoleDebug(
-		PREFIX.DEBUG,
-		"[DEPRECATED] clearCache called - no global cache to clear in Redis storage",
-	);
+  consoleDebug(
+    PREFIX.DEBUG,
+    "[DEPRECATED] clearCache called - no global cache to clear in Redis storage",
+  );
 }
 
 // =============================================================================
@@ -572,52 +570,55 @@ export function clearCache(): void {
  * - redis-memory-server: https://github.com/nodkz/redis-memory-server
  */
 export interface FileSystem {
-	/** @deprecated */
-	readFile(path: string, encoding: BufferEncoding): Promise<string>;
-	/** @deprecated */
-	writeFile(
-		path: string,
-		data: string,
-		encoding: BufferEncoding,
-	): Promise<void>;
-	/** @deprecated */
-	mkdir(path: string, options?: { recursive: boolean }): Promise<string | undefined>;
-	/** @deprecated */
-	unlink(path: string): Promise<void>;
-	/** @deprecated */
-	rename(oldPath: string, newPath: string): Promise<void>;
-	/** @deprecated */
-	stat(path: string): Promise<{
-		size: number;
-		birthtime: Date;
-		mtime: Date;
-		isFile(): boolean;
-		isDirectory(): boolean;
-	}>;
-	/** @deprecated */
-	readdir(
-		path: string,
-		options: { withFileTypes: true },
-	): Promise<Array<{ name: string; isFile(): boolean }>>;
+  /** @deprecated */
+  readFile(path: string, encoding: BufferEncoding): Promise<string>;
+  /** @deprecated */
+  writeFile(
+    path: string,
+    data: string,
+    encoding: BufferEncoding,
+  ): Promise<void>;
+  /** @deprecated */
+  mkdir(
+    path: string,
+    options?: { recursive: boolean },
+  ): Promise<string | undefined>;
+  /** @deprecated */
+  unlink(path: string): Promise<void>;
+  /** @deprecated */
+  rename(oldPath: string, newPath: string): Promise<void>;
+  /** @deprecated */
+  stat(path: string): Promise<{
+    size: number;
+    birthtime: Date;
+    mtime: Date;
+    isFile(): boolean;
+    isDirectory(): boolean;
+  }>;
+  /** @deprecated */
+  readdir(
+    path: string,
+    options: { withFileTypes: true },
+  ): Promise<Array<{ name: string; isFile(): boolean }>>;
 }
 
 /**
  * @deprecated FileSystem injection has been removed.
  * Use ioredis mocking libraries for testing instead.
  */
-export function setFileSystem(fs: FileSystem | undefined): void {
-	throw new Error(
-		"setFileSystem is not supported in Redis storage. Mock the Redis client instead using ioredis-mock.",
-	);
+export function setFileSystem(_fs: FileSystem | undefined): void {
+  throw new Error(
+    "setFileSystem is not supported in Redis storage. Mock the Redis client instead using ioredis-mock.",
+  );
 }
 
 /**
  * @deprecated FileSystem abstraction has been removed.
  */
 export function getFileSystem(): FileSystem {
-	throw new Error(
-		"getFileSystem is not supported in Redis storage. Redis operations do not use a file system interface.",
-	);
+  throw new Error(
+    "getFileSystem is not supported in Redis storage. Redis operations do not use a file system interface.",
+  );
 }
 
 /**
@@ -625,8 +626,8 @@ export function getFileSystem(): FileSystem {
  * Redis operations are atomic.
  */
 export interface FileLock {
-	filePath: string;
-	acquiredAt: number;
+  filePath: string;
+  acquiredAt: number;
 }
 
 /**
@@ -634,9 +635,9 @@ export interface FileLock {
  * Use redis.exists() or redis.ttl() for key metadata.
  */
 export interface FileStats {
-	size: number;
-	createdAt: Date;
-	modifiedAt: Date;
-	isFile: boolean;
-	isDirectory: boolean;
+  size: number;
+  createdAt: Date;
+  modifiedAt: Date;
+  isFile: boolean;
+  isDirectory: boolean;
 }

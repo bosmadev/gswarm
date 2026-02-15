@@ -343,8 +343,8 @@ async function createLruSelectorAdapter(
 
     async recordProjectError(
       projectId: string,
-      statusCode: number,
-      errorType: string,
+      _statusCode: number,
+      _errorType: string,
     ): Promise<void> {
       try {
         await deps.recordProjectError(projectId, "server");

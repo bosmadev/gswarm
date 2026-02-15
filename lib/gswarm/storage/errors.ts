@@ -120,7 +120,10 @@ export const ERRORS_CACHE_TTL_MS = 30_000;
 export const MAX_ERRORS_PER_DAY = 10_000;
 
 // In-memory cache for errors by date (reduces Redis round-trips)
-const errorsCacheByDate = new Map<string, { data: DailyErrorLog; expiresAt: number }>();
+const errorsCacheByDate = new Map<
+  string,
+  { data: DailyErrorLog; expiresAt: number }
+>();
 
 // =============================================================================
 // CACHE HELPERS
@@ -212,7 +215,15 @@ export async function loadErrorLog(
       return { success: true, data: emptyLog };
     }
 
-    const data = JSON.parse(rawData) as DailyErrorLog;
+    let data: DailyErrorLog;
+    try {
+      data = JSON.parse(rawData);
+    } catch {
+      return {
+        success: false,
+        error: "Failed to parse stored error log: invalid JSON",
+      };
+    }
 
     // Update cache
     setCachedErrors(targetDate, data);
@@ -434,7 +445,10 @@ export async function clearTodaysErrors(): Promise<StorageResult<void>> {
     return { success: true, data: undefined };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `Failed to clear today's errors: ${error}` };
+    return {
+      success: false,
+      error: `Failed to clear today's errors: ${error}`,
+    };
   }
 }
 
@@ -450,7 +464,13 @@ export async function clearAllErrors(): Promise<StorageResult<number>> {
 
     // Scan for all errors:* keys and delete them
     do {
-      const [newCursor, keys] = await redis.scan(cursor, "MATCH", "errors:*", "COUNT", 100);
+      const [newCursor, keys] = await redis.scan(
+        cursor,
+        "MATCH",
+        "errors:*",
+        "COUNT",
+        100,
+      );
       cursor = newCursor;
 
       if (keys.length > 0) {
@@ -479,7 +499,7 @@ export async function clearAllErrors(): Promise<StorageResult<number>> {
  * @deprecated With Redis TTL, cleanup happens automatically. This is a no-op for compatibility.
  */
 export async function cleanupOldErrors(
-  keepDays = 30,
+  _keepDays = 30,
 ): Promise<StorageResult<number>> {
   // Redis TTL handles automatic cleanup - no manual intervention needed
   // Return success with 0 deleted files for backward compatibility

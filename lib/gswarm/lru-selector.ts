@@ -397,7 +397,7 @@ export async function markProjectCooldown(
  */
 export async function recordProjectError(
   projectId: string,
-  statusCode: number,
+  _statusCode: number,
   errorType: string,
 ): Promise<void> {
   const status = await getProjectStatus(projectId);

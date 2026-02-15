@@ -8,6 +8,7 @@
  */
 
 import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
+import { storageError } from "../schemas";
 import type { StorageResult, StoredToken, TokenData } from "../types";
 import { getRedisClient } from "./redis";
 
@@ -147,6 +148,17 @@ export async function loadAllTokens(): Promise<
 
         if (Object.keys(data).length > 0) {
           // Parse numeric fields back to numbers
+          let projects: string[] | undefined;
+          if (data.projects) {
+            try {
+              projects = JSON.parse(data.projects);
+            } catch {
+              return storageError(
+                `Failed to parse projects for ${email}: invalid JSON`,
+              );
+            }
+          }
+
           const token: StoredToken = {
             ...data,
             email,
@@ -158,7 +170,7 @@ export async function loadAllTokens(): Promise<
               : undefined,
             is_invalid: data.is_invalid === "true",
             invalid_at: data.invalid_at ? Number(data.invalid_at) : undefined,
-            projects: data.projects ? JSON.parse(data.projects) : undefined,
+            projects,
           } as StoredToken;
 
           tokens.set(email, token);
@@ -172,8 +184,7 @@ export async function loadAllTokens(): Promise<
     consoleDebug(PREFIX.DEBUG, `Loaded ${tokens.size} tokens from Redis`);
     return { success: true, data: tokens };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     consoleError(PREFIX.ERROR, `Failed to load tokens: ${errorMessage}`);
     return { success: false, error: errorMessage };
   }
@@ -207,6 +218,17 @@ export async function loadToken(
     }
 
     // Parse numeric fields back to numbers
+    let projects: string[] | undefined;
+    if (data.projects) {
+      try {
+        projects = JSON.parse(data.projects);
+      } catch {
+        return storageError(
+          `Failed to parse projects for ${email}: invalid JSON`,
+        );
+      }
+    }
+
     const token: StoredToken = {
       ...data,
       email,
@@ -218,7 +240,7 @@ export async function loadToken(
         : undefined,
       is_invalid: data.is_invalid === "true",
       invalid_at: data.invalid_at ? Number(data.invalid_at) : undefined,
-      projects: data.projects ? JSON.parse(data.projects) : undefined,
+      projects,
     } as StoredToken;
 
     // Update cache if it exists
@@ -229,8 +251,7 @@ export async function loadToken(
 
     return { success: true, data: token };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     consoleError(
       PREFIX.ERROR,
       `Failed to load token for ${email}: ${errorMessage}`,
@@ -326,8 +347,7 @@ export async function saveToken(
     consoleDebug(PREFIX.DEBUG, `Saved token for ${email} to Redis`);
     return { success: true, data: storedToken };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     consoleError(
       PREFIX.ERROR,
       `Failed to save token for ${email}: ${errorMessage}`,
@@ -357,8 +377,7 @@ export async function deleteToken(email: string): Promise<StorageResult<void>> {
     consoleDebug(PREFIX.DEBUG, `Deleted token for ${email} from Redis`);
     return { success: true, data: undefined };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     consoleError(
       PREFIX.ERROR,
       `Failed to delete token for ${email}: ${errorMessage}`,

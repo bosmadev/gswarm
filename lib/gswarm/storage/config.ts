@@ -142,7 +142,15 @@ export async function loadConfig(): Promise<StorageResult<GSwarmConfig>> {
     }
 
     // Parse and merge with defaults to ensure all fields exist
-    const parsedConfig = JSON.parse(data) as Partial<GSwarmConfig>;
+    let parsedConfig: Partial<GSwarmConfig>;
+    try {
+      parsedConfig = JSON.parse(data);
+    } catch {
+      return {
+        success: false,
+        error: "Failed to parse stored config: invalid JSON",
+      };
+    }
     const mergedConfig = mergeWithDefaults(parsedConfig, DEFAULT_CONFIG);
 
     return { success: true, data: mergedConfig };

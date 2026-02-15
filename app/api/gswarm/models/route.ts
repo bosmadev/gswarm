@@ -184,7 +184,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (generation) {
-      filteredModels = filteredModels.filter((m) => m.generation === generation);
+      filteredModels = filteredModels.filter(
+        (m) => m.generation === generation,
+      );
     }
 
     if (!includePreview) {

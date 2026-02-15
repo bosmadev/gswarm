@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * GSwarm CLI
  *
@@ -21,6 +22,8 @@
  *   help                 - Show this help
  */
 
+import type { Server } from "node:http";
+import { createServer } from "node:http";
 import {
   type Interface,
   createInterface as createReadlineInterface,
@@ -28,6 +31,16 @@ import {
 import { PREFIX, consoleClear, consoleError, consoleLog } from "../console.ts";
 import { gswarmClient } from "./client.ts";
 import { GSWARM_CONFIG } from "./executor.ts";
+import {
+  OAUTH_CONFIG,
+  discoverProjects,
+  exchangeCodeForTokens,
+  extractValidationUrl,
+  generateAuthUrl,
+  getTokenEmailFromData,
+  isValidationRequired,
+  refreshAccessToken,
+} from "./oauth.ts";
 import {
   getAllGcpProjects,
   getEnabledGcpProjects,
@@ -37,26 +50,12 @@ import {
 import {
   deleteToken,
   invalidateTokenCache,
+  invalidateTokenCache as invalidateTokenCacheStorage,
   isTokenExpired,
   loadAllTokens,
+  saveToken as saveTokenStorage,
 } from "./storage/tokens.ts";
 import type { GcpProjectInfo, StoredToken, TokenData } from "./types.ts";
-import { createServer } from "node:http";
-import type { Server } from "node:http";
-import {
-  generateAuthUrl,
-  exchangeCodeForTokens,
-  getTokenEmailFromData,
-  discoverProjects,
-  isValidationRequired,
-  extractValidationUrl,
-  refreshAccessToken,
-  OAUTH_CONFIG,
-} from "./oauth.ts";
-import {
-  saveToken as saveTokenStorage,
-  invalidateTokenCache as invalidateTokenCacheStorage,
-} from "./storage/tokens.ts";
 
 // =============================================================================
 // ANSI Colors
@@ -200,7 +199,7 @@ function startOAuthServer(): Promise<{
         if (code) {
           res.writeHead(200, { "Content-Type": "text/html" });
           res.end(
-            '<html><body><h1>Authentication Successful!</h1><p>You can close this window and return to the CLI.</p></body></html>',
+            "<html><body><h1>Authentication Successful!</h1><p>You can close this window and return to the CLI.</p></body></html>",
           );
           resolveCode(code);
         } else {
@@ -304,7 +303,10 @@ async function authenticateAccount(
     const authUrlWithHint = new URL(authUrl);
     authUrlWithHint.searchParams.set("login_hint", email);
 
-    consoleLog(PREFIX.GSWARM, `${DIM}OAuth server running on port ${port}${RESET}`);
+    consoleLog(
+      PREFIX.GSWARM,
+      `${DIM}OAuth server running on port ${port}${RESET}`,
+    );
     consoleLog(PREFIX.GSWARM, "");
     consoleLog(
       PREFIX.GSWARM,
@@ -347,7 +349,10 @@ async function authenticateAccount(
         error: `Email mismatch: expected ${email}, got ${tokenEmail}`,
       };
     }
-    consoleLog(PREFIX.GSWARM, `${GREEN}✓${RESET} Email verified: ${tokenEmail}`);
+    consoleLog(
+      PREFIX.GSWARM,
+      `${GREEN}✓${RESET} Email verified: ${tokenEmail}`,
+    );
 
     // Discover projects
     consoleLog(PREFIX.GSWARM, "Discovering GCP projects...");
@@ -374,7 +379,10 @@ async function authenticateAccount(
           "This account needs one-time verification. Please visit:",
         );
         consoleLog(PREFIX.GSWARM, "");
-        consoleLog(PREFIX.GSWARM, `  ${CYAN}${testResult.validationUrl}${RESET}`);
+        consoleLog(
+          PREFIX.GSWARM,
+          `  ${CYAN}${testResult.validationUrl}${RESET}`,
+        );
         consoleLog(PREFIX.GSWARM, "");
         consoleLog(
           PREFIX.GSWARM,
@@ -402,7 +410,10 @@ async function authenticateAccount(
 
     const saveResult = await saveTokenStorage(tokenEmail, storedToken, false);
     if (!saveResult.success) {
-      return { success: false, error: `Failed to save token: ${saveResult.error}` };
+      return {
+        success: false,
+        error: `Failed to save token: ${saveResult.error}`,
+      };
     }
 
     invalidateTokenCacheStorage();
@@ -793,13 +804,20 @@ async function authVerify(email: string): Promise<void> {
   const token = tokensResult.data.get(email.toLowerCase());
   if (!token) {
     consoleError(PREFIX.ERROR, `No token found for ${email}`);
-    consoleLog(PREFIX.GSWARM, "Use 'pnpm gswarm auth add <email>' to authenticate first.");
+    consoleLog(
+      PREFIX.GSWARM,
+      "Use 'pnpm gswarm auth add <email>' to authenticate first.",
+    );
     process.exit(1);
   }
 
   // Refresh token if needed
   let currentToken = token;
-  if (!currentToken.access_token || !currentToken.expiry_timestamp || Date.now() / 1000 >= currentToken.expiry_timestamp - 60) {
+  if (
+    !currentToken.access_token ||
+    !currentToken.expiry_timestamp ||
+    Date.now() / 1000 >= currentToken.expiry_timestamp - 60
+  ) {
     consoleLog(PREFIX.GSWARM, "Refreshing access token...");
     const refreshed = await refreshAccessToken(currentToken);
     if (!refreshed) {
@@ -858,14 +876,21 @@ async function authList(): Promise<void> {
   if (tokens.length === 0) {
     consoleLog(PREFIX.GSWARM, "No authenticated accounts.");
     consoleLog(PREFIX.GSWARM, "");
-    consoleLog(PREFIX.GSWARM, "Use 'pnpm gswarm auth add <email>' to add an account.");
+    consoleLog(
+      PREFIX.GSWARM,
+      "Use 'pnpm gswarm auth add <email>' to add an account.",
+    );
     consoleLog(PREFIX.GSWARM, "");
     return;
   }
 
   for (const token of tokens) {
-    const isExpired = !token.expiry_timestamp || Date.now() / 1000 >= token.expiry_timestamp - 60;
-    const status = isExpired ? `${RED}Expired${RESET}` : `${GREEN}Valid${RESET}`;
+    const isExpired =
+      !token.expiry_timestamp ||
+      Date.now() / 1000 >= token.expiry_timestamp - 60;
+    const status = isExpired
+      ? `${RED}Expired${RESET}`
+      : `${GREEN}Valid${RESET}`;
     const projectCount = token.projects?.length || 0;
 
     consoleLog(PREFIX.GSWARM, `${CYAN}${token.email}${RESET}`);
@@ -875,10 +900,7 @@ async function authList(): Promise<void> {
 
     if (token.expiry_timestamp) {
       const expiresAt = new Date(token.expiry_timestamp * 1000);
-      consoleLog(
-        PREFIX.GSWARM,
-        `  Expires: ${expiresAt.toLocaleString()}`,
-      );
+      consoleLog(PREFIX.GSWARM, `  Expires: ${expiresAt.toLocaleString()}`);
     }
 
     if (token.is_invalid) {
@@ -1159,33 +1181,63 @@ function printHelp(): void {
   consoleLog(PREFIX.GSWARM, "  status         Show status summary");
   consoleLog(PREFIX.GSWARM, "  projects       List all projects");
   consoleLog(PREFIX.GSWARM, "  test           Test all enabled projects");
-  consoleLog(PREFIX.GSWARM, "  test <email>   Test specific account's projects");
+  consoleLog(
+    PREFIX.GSWARM,
+    "  test <email>   Test specific account's projects",
+  );
   consoleLog(PREFIX.GSWARM, "  rotation       Test project rotation");
   consoleLog(PREFIX.GSWARM, "  help           Show this help");
   consoleLog(PREFIX.GSWARM, "");
 
   consoleLog(PREFIX.GSWARM, `${BOLD}Auth Commands:${RESET}`);
-  consoleLog(PREFIX.GSWARM, "  auth add <email>                Add single account via OAuth");
-  consoleLog(PREFIX.GSWARM, "  auth batch <email1,email2,...>  Add multiple accounts sequentially");
-  consoleLog(PREFIX.GSWARM, "  auth verify <email>             Get verification URL for account");
-  consoleLog(PREFIX.GSWARM, "  auth list                       List all authenticated accounts");
-  consoleLog(PREFIX.GSWARM, "  auth test <email>               Test API access for account");
+  consoleLog(
+    PREFIX.GSWARM,
+    "  auth add <email>                Add single account via OAuth",
+  );
+  consoleLog(
+    PREFIX.GSWARM,
+    "  auth batch <email1,email2,...>  Add multiple accounts sequentially",
+  );
+  consoleLog(
+    PREFIX.GSWARM,
+    "  auth verify <email>             Get verification URL for account",
+  );
+  consoleLog(
+    PREFIX.GSWARM,
+    "  auth list                       List all authenticated accounts",
+  );
+  consoleLog(
+    PREFIX.GSWARM,
+    "  auth test <email>               Test API access for account",
+  );
   consoleLog(PREFIX.GSWARM, "");
 
   consoleLog(PREFIX.GSWARM, `${BOLD}Project Commands:${RESET}`);
-  consoleLog(PREFIX.GSWARM, "  projects list                   List all projects across all accounts");
+  consoleLog(
+    PREFIX.GSWARM,
+    "  projects list                   List all projects across all accounts",
+  );
   consoleLog(PREFIX.GSWARM, "");
 
   consoleLog(PREFIX.GSWARM, `${BOLD}OAuth Flow:${RESET}`);
-  consoleLog(PREFIX.GSWARM, "  1. Run 'auth add <email>' or 'auth batch <emails>'");
+  consoleLog(
+    PREFIX.GSWARM,
+    "  1. Run 'auth add <email>' or 'auth batch <emails>'",
+  );
   consoleLog(PREFIX.GSWARM, "  2. Visit the OAuth URL in an incognito browser");
-  consoleLog(PREFIX.GSWARM, "  3. If VALIDATION_REQUIRED, visit the verification URL");
+  consoleLog(
+    PREFIX.GSWARM,
+    "  3. If VALIDATION_REQUIRED, visit the verification URL",
+  );
   consoleLog(PREFIX.GSWARM, "  4. Run 'auth verify <email>' to confirm");
   consoleLog(PREFIX.GSWARM, "");
 
   consoleLog(PREFIX.GSWARM, `${BOLD}Examples:${RESET}`);
   consoleLog(PREFIX.GSWARM, "  pnpm gswarm auth add user@example.com");
-  consoleLog(PREFIX.GSWARM, "  pnpm gswarm auth batch user1@example.com,user2@example.com");
+  consoleLog(
+    PREFIX.GSWARM,
+    "  pnpm gswarm auth batch user1@example.com,user2@example.com",
+  );
   consoleLog(PREFIX.GSWARM, "  pnpm gswarm auth verify user@example.com");
   consoleLog(PREFIX.GSWARM, "  pnpm gswarm test user@example.com");
   consoleLog(PREFIX.GSWARM, "  pnpm gswarm projects list");
@@ -1198,7 +1250,10 @@ function printHelp(): void {
     `  Max Output Tokens: ${GSWARM_CONFIG.maxOutputTokens}`,
   );
   consoleLog(PREFIX.GSWARM, `  Temperature: ${GSWARM_CONFIG.temperature}`);
-  consoleLog(PREFIX.GSWARM, `  Client ID: ${OAUTH_CONFIG.CLIENT_ID.slice(0, 20)}...`);
+  consoleLog(
+    PREFIX.GSWARM,
+    `  Client ID: ${OAUTH_CONFIG.CLIENT_ID.slice(0, 20)}...`,
+  );
   consoleLog(PREFIX.GSWARM, `  Scopes: ${OAUTH_CONFIG.SCOPE}`);
   consoleLog(PREFIX.GSWARM, "");
 }
@@ -1285,8 +1340,14 @@ async function main(): Promise<void> {
             break;
 
           default:
-            consoleError(PREFIX.ERROR, `Unknown auth subcommand: ${subCommand}`);
-            consoleLog(PREFIX.GSWARM, "Available: add, batch, verify, list, test");
+            consoleError(
+              PREFIX.ERROR,
+              `Unknown auth subcommand: ${subCommand}`,
+            );
+            consoleLog(
+              PREFIX.GSWARM,
+              "Available: add, batch, verify, list, test",
+            );
             process.exit(1);
         }
         break;

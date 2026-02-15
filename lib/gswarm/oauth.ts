@@ -76,7 +76,7 @@ interface GeminiApiError {
     message?: string;
     status?: string;
     details?: Array<{
-      '@type'?: string;
+      "@type"?: string;
       metadata?: Record<string, string>;
     }>;
   };
@@ -232,9 +232,7 @@ export function extractValidationUrl(errorData: unknown): string | null {
  * console.log("Found projects:", projects);
  * ```
  */
-export async function discoverProjects(
-  accessToken: string,
-): Promise<string[]> {
+export async function discoverProjects(accessToken: string): Promise<string[]> {
   consoleDebug(PREFIX.API, "Discovering GCP projects");
 
   try {
@@ -324,7 +322,10 @@ export function isValidationRequired(errorData: unknown): boolean {
   const status = errorData.error?.status;
 
   // Check for explicit VALIDATION_REQUIRED in status or message
-  if (status === "VALIDATION_REQUIRED" || message?.includes("VALIDATION_REQUIRED")) {
+  if (
+    status === "VALIDATION_REQUIRED" ||
+    message?.includes("VALIDATION_REQUIRED")
+  ) {
     return true;
   }
 

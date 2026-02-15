@@ -1,6 +1,6 @@
 [project]
-name = "gswarm-api"
-version = "1.0.2"
+name = "gswarm"
+version = "1.0.3"
 description = "Gemini Swarm API Proxy"
 readme = "README.md"
 requires-python = ">=3.13"

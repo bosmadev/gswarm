@@ -164,7 +164,10 @@ function SidebarContent({
           if (item.section && item.section !== currentSection && !collapsed) {
             currentSection = item.section;
             sectionHeader = (
-              <div key={`section-${item.section}`} className="px-3 pt-4 pb-1.5 text-right">
+              <div
+                key={`section-${item.section}`}
+                className="px-3 pt-4 pb-1.5 text-right"
+              >
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-text-tertiary/70">
                   {item.section}
                 </span>

@@ -27,7 +27,10 @@ export const METRICS_TTL_SECONDS = 2592000; // 30 days
 export const METRICS_CACHE_TTL_MS = 10000; // 10 seconds (in-memory cache)
 
 // In-memory cache for metrics by date (reduces Redis round-trips)
-const metricsCacheByDate = new Map<string, { data: DailyMetrics; expiresAt: number }>();
+const metricsCacheByDate = new Map<
+  string,
+  { data: DailyMetrics; expiresAt: number }
+>();
 
 /**
  * Gets cached metrics for a specific date if still valid
@@ -314,7 +317,15 @@ export async function loadMetrics(
       return { success: true, data: emptyMetrics };
     }
 
-    const data = JSON.parse(rawData) as DailyMetrics;
+    let data: DailyMetrics;
+    try {
+      data = JSON.parse(rawData);
+    } catch {
+      return {
+        success: false,
+        error: "Failed to parse stored metrics: invalid JSON",
+      };
+    }
 
     // Update cache
     setCachedMetrics(targetDate, data);
@@ -380,7 +391,12 @@ export async function recordMetric(
   try {
     const redis = getRedisClient();
     const key = getMetricsKey(metricDate);
-    await redis.set(key, JSON.stringify(dailyMetrics), "EX", METRICS_TTL_SECONDS);
+    await redis.set(
+      key,
+      JSON.stringify(dailyMetrics),
+      "EX",
+      METRICS_TTL_SECONDS,
+    );
     return { success: true, data: undefined };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -545,7 +561,7 @@ export async function predictQuotaExhaustion(
  * @deprecated With Redis TTL, cleanup happens automatically. This is a no-op for compatibility.
  */
 export async function cleanupOldMetrics(
-  keepDays = 30,
+  _keepDays = 30,
 ): Promise<StorageResult<number>> {
   // Redis TTL handles automatic cleanup - no manual intervention needed
   // Return success with 0 deleted files for backward compatibility

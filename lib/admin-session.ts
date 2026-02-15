@@ -257,8 +257,7 @@ export async function validateCredentials(
     }
 
     return { valid: false };
-  } catch (err) {
-    console.error("[Admin] Failed to validate credentials from Redis:", err);
+  } catch {
     // Fallback to .env on Redis errors
     const adminUsername = process.env.ADMIN_USERNAME;
     const adminPassword = process.env.ADMIN_PASSWORD;

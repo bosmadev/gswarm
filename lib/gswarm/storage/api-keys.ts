@@ -157,7 +157,12 @@ async function loadApiKeysStore(): Promise<StorageResult<ApiKeysStore>> {
       return { success: true, data: emptyStore };
     }
 
-    const parsed: ApiKeysStore = JSON.parse(data);
+    let parsed: ApiKeysStore;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return storageError("Failed to parse stored API keys: invalid JSON");
+    }
     return { success: true, data: parsed };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -287,7 +292,10 @@ export async function validateApiKey(
 
   // Check rate limit (skip if unlimited: 0 or undefined)
   if (keyConfig.rate_limit && keyConfig.rate_limit > 0) {
-    const rateLimitResult = await checkRateLimit(keyConfig.key_hash, keyConfig.rate_limit);
+    const rateLimitResult = await checkRateLimit(
+      keyConfig.key_hash,
+      keyConfig.rate_limit,
+    );
 
     if (!rateLimitResult.success) {
       // Rate limit exceeded
@@ -303,7 +311,11 @@ export async function validateApiKey(
     }
 
     // Rate limit passed - get remaining count
-    const { remaining, resetTime } = rateLimitResult.data!;
+    // Safety: success=true guarantees data exists
+    if (!rateLimitResult.data) {
+      return { valid: false, error: "Invalid rate limit response" };
+    }
+    const { remaining, resetTime } = rateLimitResult.data;
 
     return {
       valid: true,
@@ -364,13 +376,13 @@ export async function checkRateLimit(
       return {1, limit - count - 1}
     `;
 
-    const result = await redis.eval(
+    const result = (await redis.eval(
       luaScript,
       1,
       rateLimitKey,
       limit.toString(),
       RATE_LIMIT_WINDOW_SEC.toString(),
-    ) as number[];
+    )) as number[];
 
     const [allowed, remaining] = result;
 

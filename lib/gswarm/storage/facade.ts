@@ -28,6 +28,7 @@ export {
   checkRateLimit,
   createApiKey,
   deleteApiKey,
+  deleteApiKeyByHash,
   generateApiKey,
   generateKeySalt,
   hashApiKey,
@@ -40,6 +41,7 @@ export {
 export {
   CacheManager,
   getDataPath,
+  getTodayDateString,
   readJsonFile,
   writeJsonFile,
 } from "./base";
@@ -87,9 +89,12 @@ export {
   saveProjectStatuses,
   updateProjectStatus,
 } from "./projects";
+// --- Redis ---
+export { shutdown as shutdownRedis } from "./redis";
 // --- Tokens ---
 export {
   deleteToken,
+  getTokenExpiryTime,
   getTokensNeedingRefresh,
   getValidTokens,
   invalidateTokenCache,

@@ -1135,7 +1135,11 @@ async function startDevServer(): Promise<void> {
   childProcess.on("close", (code) => {
     isServerLaunching = false;
     if (agentServerProcess) {
-      try { agentServerProcess.kill("SIGTERM"); } catch { /* already dead */ }
+      try {
+        agentServerProcess.kill("SIGTERM");
+      } catch {
+        /* already dead */
+      }
       agentServerProcess = null;
     }
     process.stdout.write(
@@ -1147,7 +1151,11 @@ async function startDevServer(): Promise<void> {
   childProcess.on("error", (err) => {
     isServerLaunching = false;
     if (agentServerProcess) {
-      try { agentServerProcess.kill("SIGTERM"); } catch { /* already dead */ }
+      try {
+        agentServerProcess.kill("SIGTERM");
+      } catch {
+        /* already dead */
+      }
       agentServerProcess = null;
     }
     process.stdout.write(

@@ -68,23 +68,21 @@ function statusToHash(status: ProjectStatus): Record<string, string> {
 /**
  * Convert Redis hash to ProjectStatus
  */
-function hashToStatus(
-  hash: Record<string, string>,
-): ProjectStatus | null {
+function hashToStatus(hash: Record<string, string>): ProjectStatus | null {
   if (!hash.projectId) return null;
 
   return {
     projectId: hash.projectId,
-    lastUsedAt: Number.parseInt(hash.lastUsedAt || "0"),
-    lastSuccessAt: Number.parseInt(hash.lastSuccessAt || "0"),
-    lastErrorAt: Number.parseInt(hash.lastErrorAt || "0"),
-    successCount: Number.parseInt(hash.successCount || "0"),
-    errorCount: Number.parseInt(hash.errorCount || "0"),
-    consecutiveErrors: Number.parseInt(hash.consecutiveErrors || "0"),
-    cooldownUntil: Number.parseInt(hash.cooldownUntil || "0"),
+    lastUsedAt: Number.parseInt(hash.lastUsedAt || "0", 10),
+    lastSuccessAt: Number.parseInt(hash.lastSuccessAt || "0", 10),
+    lastErrorAt: Number.parseInt(hash.lastErrorAt || "0", 10),
+    successCount: Number.parseInt(hash.successCount || "0", 10),
+    errorCount: Number.parseInt(hash.errorCount || "0", 10),
+    consecutiveErrors: Number.parseInt(hash.consecutiveErrors || "0", 10),
+    cooldownUntil: Number.parseInt(hash.cooldownUntil || "0", 10),
     lastErrorType: hash.lastErrorType as ProjectErrorType | undefined,
     quotaResetTime: hash.quotaResetTime
-      ? Number.parseInt(hash.quotaResetTime)
+      ? Number.parseInt(hash.quotaResetTime, 10)
       : undefined,
     quotaResetReason: hash.quotaResetReason,
   };
@@ -449,13 +447,13 @@ export async function getQuotaExhaustedProjects(): Promise<
 > {
   const loadResult = await loadProjectStatuses();
   if (!loadResult.success) {
-    return loadResult;
+    return { success: false, error: loadResult.error };
   }
 
   const now = Date.now();
   const exhausted: ProjectStatus[] = [];
 
-  for (const status of loadResult.data.values()) {
+  for (const status of Array.from(loadResult.data.values())) {
     if (
       status.lastErrorType === "quota_exhausted" ||
       (status.quotaResetTime && now < status.quotaResetTime)

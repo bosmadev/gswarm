@@ -6,13 +6,6 @@
  */
 
 import { type NextRequest, NextResponse } from "next/server";
-import { parseAndValidate } from "@/lib/api-validation";
-import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
-import { gswarmClient } from "@/lib/gswarm/client";
-import { errorResponse } from "@/lib/gswarm/error-handler";
-import { ApiError } from "@/lib/gswarm/errors";
-import { recordMetric } from "@/lib/gswarm/storage/metrics";
-import type { RequestMetric } from "@/lib/gswarm/types";
 import {
   addCorsHeaders,
   addRateLimitHeaders,
@@ -22,6 +15,13 @@ import {
   unauthorizedResponse,
 } from "@/app/api/gswarm/_shared/auth";
 import { streamingResponse } from "@/app/api/gswarm/_shared/streaming";
+import { parseAndValidate } from "@/lib/api-validation";
+import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
+import { gswarmClient } from "@/lib/gswarm/client";
+import { errorResponse } from "@/lib/gswarm/error-handler";
+import { ApiError } from "@/lib/gswarm/errors";
+import { recordMetric } from "@/lib/gswarm/storage/metrics";
+import type { RequestMetric } from "@/lib/gswarm/types";
 
 // =============================================================================
 // MODEL MAPPING
@@ -192,7 +192,13 @@ export async function POST(request: NextRequest) {
     return parseResult.response;
   }
 
-  const { messages, model: requestedModel, max_tokens, temperature, stream } = parseResult.data;
+  const {
+    messages,
+    model: requestedModel,
+    max_tokens,
+    temperature,
+    stream,
+  } = parseResult.data;
 
   // Validate messages array is not empty
   if (!messages.length) {
@@ -234,7 +240,9 @@ export async function POST(request: NextRequest) {
   }
 
   // Map OpenAI model to Gemini model
-  const geminiModel = requestedModel ? mapModel(requestedModel) : "gemini-2.0-flash";
+  const geminiModel = requestedModel
+    ? mapModel(requestedModel)
+    : "gemini-2.0-flash";
 
   consoleDebug(
     PREFIX.DEBUG,
@@ -278,7 +286,10 @@ export async function POST(request: NextRequest) {
 
       // Record metric asynchronously (don't wait for it)
       recordMetric(metric).catch((error) => {
-        consoleError(PREFIX.ERROR, `[OpenAI API] Failed to record metric: ${error}`);
+        consoleError(
+          PREFIX.ERROR,
+          `[OpenAI API] Failed to record metric: ${error}`,
+        );
       });
 
       return streamingResponse({
@@ -308,7 +319,10 @@ export async function POST(request: NextRequest) {
 
     // Record metric asynchronously (don't wait for it)
     recordMetric(metric).catch((error) => {
-      consoleError(PREFIX.ERROR, `[OpenAI API] Failed to record metric: ${error}`);
+      consoleError(
+        PREFIX.ERROR,
+        `[OpenAI API] Failed to record metric: ${error}`,
+      );
     });
 
     // Build OpenAI-compatible response
