@@ -1,211 +1,168 @@
 <div align="center">
 
-# GSwarm API
+```
+   ██████  ███████ ██     ██  █████  ██████  ███    ███
+  ██       ██      ██     ██ ██   ██ ██   ██ ████  ████
+  ██   ███ ███████ ██  █  ██ ███████ ██████  ██ ████ ██
+  ██    ██      ██ ██ ███ ██ ██   ██ ██   ██ ██  ██  ██
+   ██████  ███████  ███ ███  ██   ██ ██   ██ ██      ██
+```
 
-OpenAI-compatible API gateway for Google Cloud AI with multi-account token pooling.
+### Free Gemini API Inference Gateway
+
+Use Google's Gemini models for free through an OpenAI-compatible API.
+Pool multiple Gmail accounts to multiply your free-tier quota.
 
 ![Next.js](https://img.shields.io/badge/Next.js-16+-black?logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9+-3178C6?logo=typescript)
-![Node.js](https://img.shields.io/badge/Node.js-25+-339933?logo=node.js)
+![License](https://img.shields.io/badge/License-AGPL--3.0-blue)
 
 </div>
 
-## Features
+---
 
-- OpenAI-compatible `/v1/chat/completions` endpoint
-- Multi-account Google OAuth token pooling
-- Admin dashboard for account and API key management
-- Automatic token refresh
-- IP-based API key restrictions
-- Metrics and error tracking
+## What is GSwarm?
 
-## Quick Start
+GSwarm is an OpenAI-compatible API proxy that routes requests through Google's free CloudCode PA endpoint — the same backend used by Gemini CLI. It pools multiple Google accounts and rotates across their GCP projects to maximize free-tier throughput.
+
+**With 3 free Gmail accounts (36 GCP projects), you get:**
+
+| Model | Requests/Min | Requests/Day | Per Account |
+|-------|-------------|-------------|-------------|
+| Gemini 2.5 Flash | ~250 RPM | ~5,000 RPD | ~1,680/acc |
+| Gemini 2.5 Pro | ~130 RPM | ~211 RPD | ~70-80/acc |
+| Gemini 3 Flash Preview | ~300 RPM | ~5,880 RPD | ~1,960/acc |
+| Gemini 3 Pro Preview | — | ~210 RPD | ~70-80/acc |
+
+## Quick Example
 
 ```bash
-# Clone and install
-git clone <repo-url>
-cd gswarm-api
-pnpm install
-
-# Install and start Redis (required for session storage)
-# Windows (via Chocolatey): choco install redis-64
-# macOS: brew install redis && brew services start redis
-# Linux: sudo apt install redis-server && sudo systemctl start redis
-
-# Set up environment
-cp .env.example .env
-# Edit .env with your values (including REDIS_URL)
-
-# Development
-pnpm dev
-
-# Production build
-pnpm build
+curl http://localhost:3001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-gswarm-your-key" \
+  -d '{
+    "model": "gemini-2.5-flash",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
 ```
 
-## Environment Variables
+Works with any OpenAI-compatible client — Cursor, Continue, Open WebUI, LangChain, etc.
 
-Create a `.env` file with the following:
+## Standalone Version
+
+Don't need the full dashboard? Use the single-file Python version:
 
 ```bash
-# Google OAuth (required for token management)
-GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your-client-secret
+# Download and run
+python gswarm-standalone.py
 
-# Admin Authentication
+# Benchmark your setup
+python gswarm-standalone.py bench --model gemini-3-pro-preview --duration 60 --rpm 60
+```
+
+**[Get gswarm-standalone.py](https://gist.github.com/bosmadev/96650e6df30f77281aa1f4e399289d3d)**
+
+---
+
+## Setup
+
+### 1. Install & Configure
+
+```bash
+git clone https://github.com/bosmadev/gswarm.git
+cd gswarm
+pnpm install
+```
+
+### 2. Environment
+
+Create a `.env` file (encrypted via [dotenvx](https://dotenvx.com)):
+
+```bash
+# Admin credentials (fallback if Redis is unavailable)
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your-secure-password
 
-# Dashboard Users (format: user1:pass1,user2:pass2)
-DASHBOARD_USERS=user1:password1
-
-# API Keys (format: name:key:ips - use * for all IPs)
-API_KEYS=mykey:sk-gswarm-xxxxx:*
+# API Keys (format: name:key:ips — use * for all IPs)
+API_KEYS=myapp:sk-gswarm-xxxxx:*
 
 # Application
 GLOBAL_PORT=3001
-GLOBAL_URL=http://localhost  # No port here - use GLOBAL_PORT
-# Production: GLOBAL_URL=https://your-domain.com (HTTPS doesn't need port)
+GLOBAL_URL=http://localhost
 
-# Session Secret (generate with: openssl rand -base64 32)
+# Session Secret (generate: openssl rand -base64 32)
 SESSION_SECRET=your-session-secret
 
-# Redis (required for session storage)
+# Redis — any Redis-compatible service works
+# Upstash (free): https://upstash.com/pricing/redis
+# Self-hosted: redis://localhost:6379
 REDIS_URL=redis://localhost:6379
 ```
 
-### Google OAuth Setup
+Encrypt with `pnpm env:encrypt` before committing.
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-2. Create a new OAuth 2.0 Client ID (Web application)
-3. Add authorized redirect URI: `https://your-domain.com/api/auth/callback`
-4. Copy Client ID and Client Secret to your `.env`
-
-## Deployment (Azure VM + WSL)
-
-The project deploys automatically via GitHub Actions on push to `main`.
-
-### GitHub Secrets Required
-
-| Secret | Description |
-|--------|-------------|
-| `AZURE_VM_IP` | Azure VM public IP address |
-| `AZURE_VM_USER` | SSH username (e.g., `azureuser`) |
-| `AZURE_SSH_PRIVATE_KEY` | SSH private key for deployment |
-| `DOTENV_PRIVATE_KEY` | dotenvx decryption key (optional) |
-
-### Server Setup (One-time)
+### 3. Run
 
 ```bash
-# On Azure VM (WSL/Ubuntu)
-
-# Create app directory
-sudo mkdir -p /opt/gswarm-api
-sudo chown $USER:$USER /opt/gswarm-api
-
-# Create .env file with secrets
-sudo tee /opt/gswarm-api/.env << 'EOF'
-GOOGLE_CLIENT_ID=your-client-id
-GOOGLE_CLIENT_SECRET=your-client-secret
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your-password
-DASHBOARD_USERS=user1:pass1
-API_KEYS=key1:sk-gswarm-xxx:*
-GLOBAL_PORT=3001
-GLOBAL_URL=https://your-domain.com
-SESSION_SECRET=your-session-secret
-# Note: HTTPS URLs don't need port (443 implicit)
-EOF
-
-# Secure the .env file
-sudo chmod 600 /opt/gswarm-api/.env
-
-# Service user will be created automatically by deploy workflow
+pnpm dev          # Development (Turbopack)
+pnpm launch       # Interactive TUI launcher
+pnpm build        # Production build
 ```
 
-### Service Management
+### 4. Add Accounts
 
-```bash
-# Status
-sudo systemctl status gswarm-api
+Open the dashboard at `http://localhost:3001/dashboard`, log in, and click **Add Account** to connect Gmail accounts via OAuth. Each account gives you 12 GCP projects for rotation.
 
-# Logs
-sudo journalctl -u gswarm-api -f
+## How It Works
 
-# Restart
-sudo systemctl restart gswarm-api
+```
+Client (OpenAI SDK) → GSwarm → Google CloudCode PA → Gemini Models
+                        ↓
+              LRU rotation across
+           3 accounts × 12 projects
+              = 36 rotation slots
 ```
 
-## Development
+1. **Request arrives** at `/v1/chat/completions` (OpenAI-compatible)
+2. **LRU selector** picks the healthiest project (success rate + cooldown scoring)
+3. **Token manager** provides a valid OAuth token (auto-refresh)
+4. **Request proxied** to Google's CloudCode PA endpoint
+5. **On 429/error** — automatic failover to next project/account
 
-### CLI Scripts
+## Supported Models
 
-```bash
-# GSwarm management
-node --experimental-transform-types lib/gswarm/cli.ts status     # Status overview
-node --experimental-transform-types lib/gswarm/cli.ts projects   # List projects
+| Model | ID |
+|-------|-----|
+| Gemini 2.5 Flash | `gemini-2.5-flash` |
+| Gemini 2.5 Pro | `gemini-2.5-pro` |
+| Gemini 3 Flash Preview | `gemini-3-flash-preview` |
+| Gemini 3 Pro Preview | `gemini-3-pro-preview` |
+| Gemini 2.0 Flash | `gemini-2.0-flash` |
 
-# API keys are managed via the dashboard UI at /dashboard
-```
+## Stack
 
-## API Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `POST /api/gswarm/chat` | OpenAI-compatible chat completions |
-| `POST /api/gswarm/generate` | Text generation |
-| `GET /api/gswarm/config` | Available models |
-| `GET /api/gswarm/metrics` | Usage metrics |
-| `GET /dashboard` | Admin dashboard |
-
-## Scripts
-
-| Script | Description |
-|--------|-------------|
-| `pnpm dev` | Development server with Turbopack |
-| `pnpm launch` | Interactive TUI launcher |
-| `pnpm build` | Production build (Next.js standalone) |
-| `pnpm validate` | Run all checks (Biome, Knip, TypeScript, tests) |
-| `pnpm gswarm` | GSwarm CLI for account management |
-
-## Build Tools
-
-| Tool | Purpose |
-|------|---------|
-| **Next.js** | App bundling, standalone build output |
-| **Biome** | Linting + formatting (replaces ESLint/Prettier) |
-| **Knip** | Dead code detection |
-| **TypeScript** | Type checking (`pnpm tsc`) |
-| **Vitest** | Unit testing |
+| Component | Technology |
+|-----------|-----------|
+| Framework | Next.js 16 (App Router) |
+| Language | TypeScript 5.9 |
+| Storage | Redis (Upstash / self-hosted) |
+| Auth | Google OAuth 2.0 |
+| Linting | Biome |
+| Testing | Vitest + Pytest |
 
 ## Contributing
 
-We welcome contributions! To contribute:
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for the fork-based workflow.
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Make your changes
-4. Run validation: `pnpm validate`
-5. Commit your changes
-6. Push to your fork
-7. Open a Pull Request targeting `main`
-
-Please ensure all tests pass and code follows our formatting standards (enforced by Biome).
+PRs target `main`. Run `pnpm validate` before submitting.
 
 ## License
 
-**GNU Affero General Public License v3.0 (AGPL-3.0)**
+**AGPL-3.0** — See [LICENSE](./LICENSE)
 
-This project is licensed under AGPL-3.0. Key terms:
-
-| ✅ Permitted | ❌ Restricted | ⚠️ Required |
-|-------------|--------------|------------|
-| Commercial use | Closed-source modifications | Disclose source |
-| Modification | Proprietary SaaS forks | State changes |
-| Distribution | | License + copyright notice |
-| Private use | | Same license for derivatives |
-| | | Network use = distribution |
-
-**Network Use Clause:** If you run this software as a network service (API, SaaS), you MUST make the source code available to users.
-
-See [LICENSE](./LICENSE) for full terms.
+| Permitted | Required | Restricted |
+|-----------|----------|-----------|
+| Commercial use | Disclose source | Closed-source mods |
+| Modification | Same license | Proprietary SaaS |
+| Distribution | Network use = distribution | |
+| Private use | Copyright notice | |
