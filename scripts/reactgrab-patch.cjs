@@ -4,21 +4,21 @@
 if (process.platform === "win32") {
   const cp = require("node:child_process");
 
-  function injectWindowsHide(args) {
+  const injectWindowsHide = (args) => {
     const last = args[args.length - 1];
     if (last && typeof last === "object" && !Array.isArray(last)) {
       last.windowsHide = true;
     }
-  }
+  };
 
-  function injectIntoOptions(rest) {
+  const injectIntoOptions = (rest) => {
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] && typeof rest[i] === "object" && !Array.isArray(rest[i])) {
         rest[i].windowsHide = true;
         break;
       }
     }
-  }
+  };
 
   const originalSpawn = cp.spawn;
   cp.spawn = function patchedSpawn(command, ...rest) {

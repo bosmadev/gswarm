@@ -149,6 +149,7 @@ async function main() {
     case "list": {
       printTestPlan();
       process.exit(0);
+      break;
     }
 
     case "run": {
@@ -172,6 +173,7 @@ async function main() {
       printTestPlan();
       const exitCode = await runTests();
       process.exit(exitCode);
+      break;
     }
 
     case "help":
@@ -192,6 +194,7 @@ async function main() {
         "  node scripts/run-integration-tests.ts run token-loading.test.ts\n",
       );
       process.exit(0);
+      break;
     }
 
     default: {

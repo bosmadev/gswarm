@@ -16,7 +16,7 @@ import {
   isProjectInCooldown,
   updateProjectStatus,
 } from "./projects";
-import { getValidTokens, loadToken } from "./storage/tokens";
+import { loadToken } from "./storage/tokens";
 import type {
   CallSource,
   GcpProjectInfo,

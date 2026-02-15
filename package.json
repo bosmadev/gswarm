@@ -51,8 +51,7 @@
     "rimraf:next": "rimraf .next node_modules/.cache",
     "env:encrypt": "dotenvx encrypt",
     "env:decrypt": "dotenvx decrypt",
-    "env:check": "node -e \"const f=require('fs').readFileSync('.env','utf8'); process.exit(f.includes('encrypted:') ? (console.log('✅ .env encrypted'),0) : (console.log('❌ .env NOT encrypted'),1))\"",
-    "prepare": "husky"
+    "env:check": "node -e \"const f=require('fs').readFileSync('.env','utf8'); process.exit(f.includes('encrypted:') ? (console.log('✅ .env encrypted'),0) : (console.log('❌ .env NOT encrypted'),1))\""
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -120,7 +119,6 @@
     "autoprefixer": "^10.4.23",
     "babel-plugin-react-compiler": "^1.0.0",
     "happy-dom": "^20.0.11",
-    "husky": "^9.1.7",
     "knip": "^5.77.1",
     "postcss": "^8.5.6",
     "postcss-load-config": "^6.0.1",

@@ -20,7 +20,6 @@ import type {
   GSwarmRequest,
   GSwarmRequestInner,
   GSwarmResponse,
-  StorageResult,
 } from "./types";
 
 export type {
