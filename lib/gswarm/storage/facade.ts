@@ -26,7 +26,6 @@ export {
 // --- API Keys ---
 export {
   checkRateLimit,
-  clearApiKeysCache,
   createApiKey,
   deleteApiKey,
   generateApiKey,
@@ -91,7 +90,6 @@ export {
 // --- Tokens ---
 export {
   deleteToken,
-  getTokenPath,
   getTokensNeedingRefresh,
   getValidTokens,
   invalidateTokenCache,
@@ -99,6 +97,7 @@ export {
   loadAllTokens,
   loadToken,
   markTokenInvalid,
-  sanitizeEmail,
   saveToken,
+  updateTokenClient,
+  updateTokenProjects,
 } from "./tokens";

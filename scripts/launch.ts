@@ -1057,8 +1057,69 @@ async function startDevServer(): Promise<void> {
     `  ${DIM}Hot reload enabled, port ${SERVER_PORT}${RESET}\n\n`,
   );
 
+  // Start React Grab agent provider server in background
+  process.stdout.write(`${BOLD}[REACT GRAB] Agent Provider${RESET}\n`);
   process.stdout.write(
-    `${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
+    `  ${DIM}Starting @react-grab/claude-code agent server...${RESET}\n`,
+  );
+
+  // Use forward slashes — NODE_OPTIONS parses backslashes as escape chars
+  const windowsHidePatch = path
+    .resolve(import.meta.dirname, "reactgrab-patch.cjs")
+    .replaceAll("\\", "/");
+
+  const reactGrabServerPath = resolveReactGrabServer();
+
+  if (reactGrabServerPath) {
+    agentServerProcess = spawn(
+      process.execPath,
+      [
+        "--require",
+        windowsHidePatch,
+        "--no-deprecation",
+        "--disable-warning=SourceMapWarning",
+        reactGrabServerPath,
+      ],
+      {
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          REACT_GRAB_CWD: path.resolve(import.meta.dirname, ".."),
+        },
+        windowsHide: true,
+      },
+    );
+  } else {
+    process.stdout.write(
+      `  ${YELLOW}⚠${RESET} Using npx fallback (windowsHide patch may not apply)\n`,
+    );
+    agentServerProcess = spawn("npx", ["@react-grab/claude-code@latest"], {
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require "${windowsHidePatch}" --no-deprecation --disable-warning=SourceMapWarning`,
+        REACT_GRAB_CWD: path.resolve(import.meta.dirname, ".."),
+      },
+      shell: true,
+      windowsHide: true,
+    });
+  }
+
+  agentServerProcess.on("error", (err) => {
+    process.stdout.write(
+      `  ${YELLOW}⚠${RESET} React Grab agent server failed: ${err.message}\n`,
+    );
+    process.stdout.write(
+      `  ${DIM}Copy mode still works. Prompt mode requires the agent server.${RESET}\n`,
+    );
+  });
+
+  process.stdout.write(
+    `  ${GREEN}✔${RESET} Agent server started (background)\n`,
+  );
+
+  process.stdout.write(
+    `\n${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
   );
 
   childProcess = spawn("pnpm", ["dev"], {
@@ -1073,6 +1134,10 @@ async function startDevServer(): Promise<void> {
 
   childProcess.on("close", (code) => {
     isServerLaunching = false;
+    if (agentServerProcess) {
+      try { agentServerProcess.kill("SIGTERM"); } catch { /* already dead */ }
+      agentServerProcess = null;
+    }
     process.stdout.write(
       `\n${YELLOW}Dev server exited with code ${code}${RESET}\n`,
     );
@@ -1081,6 +1146,10 @@ async function startDevServer(): Promise<void> {
 
   childProcess.on("error", (err) => {
     isServerLaunching = false;
+    if (agentServerProcess) {
+      try { agentServerProcess.kill("SIGTERM"); } catch { /* already dead */ }
+      agentServerProcess = null;
+    }
     process.stdout.write(
       `\n${RED}Error starting dev server: ${err.message}${RESET}\n`,
     );

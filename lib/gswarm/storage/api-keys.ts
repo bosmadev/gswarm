@@ -19,91 +19,51 @@ import type {
   ApiKeyValidationResult,
   StorageResult,
 } from "../types";
-import { CacheManager, getDataPath, readJsonFile, writeJsonFile } from "./base";
+import { getRedisClient } from "./redis";
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-/** File name for API keys storage */
-export const API_KEYS_FILE = "api-keys.json";
+/** Redis key for API keys JSON storage */
+const REDIS_API_KEYS_KEY = "gswarm:api-keys";
 
-/** Cache TTL for API keys in milliseconds (1 minute) */
-export const API_KEYS_CACHE_TTL_MS = 60000;
+/** Redis key prefix for rate limiting counters */
+const REDIS_RATE_LIMIT_PREFIX = "gswarm:rate-limit";
 
-/** Rate limit window duration in milliseconds (1 minute) */
-const RATE_LIMIT_WINDOW_MS = 60000;
+/** Rate limit window duration in seconds (1 minute) */
+const RATE_LIMIT_WINDOW_SEC = 60;
 
 // =============================================================================
-// In-Memory Rate Limiter (Atomic)
+// Rate Limiting Helper
 // =============================================================================
 
 /**
- * In-memory rate limit counters for atomic enforcement.
- *
- * The file-based rate_limits in ApiKeysStore are NOT atomic under concurrent
- * requests (read-then-write race condition). This in-memory map is the source
- * of truth for rate limiting. It is synchronous, so concurrent requests within
- * the same Node.js process are serialized by the event loop, guaranteeing
- * atomicity. The file-based store is updated best-effort for dashboard display.
+ * Gets the current minute timestamp for rate limiting windows
+ * @returns Unix timestamp truncated to the current minute
  */
-const inMemoryRateLimits = new Map<
-  string,
-  { windowStart: number; count: number }
->();
+function getCurrentMinute(): number {
+  return Math.floor(Date.now() / 1000 / RATE_LIMIT_WINDOW_SEC);
+}
 
 // =============================================================================
 // Types
 // =============================================================================
 
 /**
- * Rate limit entry for tracking request counts per key
- */
-export interface RateLimitEntry {
-  /** SHA256 hash of the API key */
-  key_hash: string;
-
-  /** Unix timestamp when the current window started */
-  window_start: number;
-
-  /** Number of requests in the current window */
-  request_count: number;
-}
-
-/**
- * API keys storage structure
+ * API keys storage structure (stored in Redis as JSON)
  */
 export interface ApiKeysStore {
   /** List of API key configurations */
   keys: ApiKeyConfig[];
-
-  /** Rate limit entries indexed by key hash */
-  rate_limits: Record<string, RateLimitEntry>;
 
   /** Unix timestamp when the store was last updated */
   updated_at: number;
 }
 
 // =============================================================================
-// Cache
+// Redis Storage Operations
 // =============================================================================
-
-/** Cache manager for API keys store */
-const apiKeysCache = new CacheManager<ApiKeysStore>(API_KEYS_CACHE_TTL_MS);
-
-/**
- * Gets the file path for API keys storage
- */
-function getApiKeysPath(): string {
-  return getDataPath(API_KEYS_FILE);
-}
-
-/**
- * Clears the API keys cache
- */
-export function clearApiKeysCache(): void {
-  apiKeysCache.invalidate();
-}
 
 // =============================================================================
 // Helper Functions
@@ -180,57 +140,46 @@ export function maskApiKey(key: string): string {
   return `${prefix}...${suffix}`;
 }
 
-// =============================================================================
-// Storage Operations
-// =============================================================================
-
 /**
- * Loads the API keys store from disk with caching
+ * Loads the API keys store from Redis
  */
 async function loadApiKeysStore(): Promise<StorageResult<ApiKeysStore>> {
-  // Check cache validity
-  const cached = apiKeysCache.get();
-  if (cached) {
-    return { success: true, data: cached };
-  }
+  try {
+    const redis = getRedisClient();
+    const data = await redis.get(REDIS_API_KEYS_KEY);
 
-  const filePath = getApiKeysPath();
-  const result = await readJsonFile<ApiKeysStore>(filePath);
-
-  if (!result.success) {
-    if (result.error?.startsWith("File not found")) {
+    if (!data) {
       // Initialize empty store
       const emptyStore: ApiKeysStore = {
         keys: [],
-        rate_limits: {},
         updated_at: Date.now(),
       };
-      apiKeysCache.set(emptyStore);
       return { success: true, data: emptyStore };
     }
-    return result;
-  }
 
-  // Update cache
-  apiKeysCache.set(result.data);
-  return result;
+    const parsed: ApiKeysStore = JSON.parse(data);
+    return { success: true, data: parsed };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return storageError(`Failed to load API keys from Redis: ${message}`);
+  }
 }
 
 /**
- * Saves the API keys store to disk
+ * Saves the API keys store to Redis
  */
 async function saveApiKeysStore(
   store: ApiKeysStore,
 ): Promise<StorageResult<void>> {
-  store.updated_at = Date.now();
-  const result = await writeJsonFile(getApiKeysPath(), store);
-
-  if (result.success) {
-    // Update cache
-    apiKeysCache.set(store);
+  try {
+    store.updated_at = Date.now();
+    const redis = getRedisClient();
+    await redis.set(REDIS_API_KEYS_KEY, JSON.stringify(store));
+    return { success: true, data: undefined };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return storageError(`Failed to save API keys to Redis: ${message}`);
   }
-
-  return result;
 }
 
 // =============================================================================
@@ -338,37 +287,30 @@ export async function validateApiKey(
 
   // Check rate limit (skip if unlimited: 0 or undefined)
   if (keyConfig.rate_limit && keyConfig.rate_limit > 0) {
-    const rateLimitResult = await checkRateLimit(key, keyConfig.rate_limit);
+    const rateLimitResult = await checkRateLimit(keyConfig.key_hash, keyConfig.rate_limit);
+
     if (!rateLimitResult.success) {
-      // Get rate limit info for response (use stored hash as lookup key)
-      const rateLimit = store.rate_limits[keyConfig.key_hash];
-      const resetTime = rateLimit
-        ? rateLimit.window_start + RATE_LIMIT_WINDOW_MS
-        : Date.now() + RATE_LIMIT_WINDOW_MS;
+      // Rate limit exceeded
+      const currentMinute = getCurrentMinute();
+      const resetTime = (currentMinute + 1) * RATE_LIMIT_WINDOW_SEC;
 
       return {
         valid: false,
         error: "Rate limit exceeded",
         rate_limit_remaining: 0,
-        rate_limit_reset: Math.ceil(resetTime / 1000),
+        rate_limit_reset: resetTime,
       };
     }
 
-    // Calculate remaining requests
-    const rateLimit = store.rate_limits[keyConfig.key_hash];
-    const remaining = rateLimit
-      ? Math.max(0, keyConfig.rate_limit - rateLimit.request_count)
-      : keyConfig.rate_limit;
-    const resetTime = rateLimit
-      ? rateLimit.window_start + RATE_LIMIT_WINDOW_MS
-      : Date.now() + RATE_LIMIT_WINDOW_MS;
+    // Rate limit passed - get remaining count
+    const { remaining, resetTime } = rateLimitResult.data!;
 
     return {
       valid: true,
       key_hash: keyConfig.key_hash,
       name: keyConfig.name,
       rate_limit_remaining: remaining,
-      rate_limit_reset: Math.ceil(resetTime / 1000),
+      rate_limit_reset: resetTime,
     };
   }
 
@@ -381,56 +323,71 @@ export async function validateApiKey(
 }
 
 /**
- * Checks and updates rate limit for an API key (sliding window)
- * @param key - The API key to check
+ * Checks and updates rate limit for an API key using Redis atomic counters
+ * @param keyHash - The SHA256 hash of the API key
  * @param limit - Maximum requests per minute
- * @returns Success if within limit, error if exceeded
+ * @returns Success with remaining count and reset time, or error if exceeded
  */
 export async function checkRateLimit(
-  key: string,
+  keyHash: string,
   limit: number,
-): Promise<StorageResult<void>> {
+): Promise<StorageResult<{ remaining: number; resetTime: number }>> {
   // Unlimited rate limit: if limit is 0 or undefined, allow all requests
   if (limit === 0 || limit === undefined) {
-    return { success: true, data: undefined };
+    return { success: true, data: { remaining: limit, resetTime: 0 } };
   }
 
-  // Use unsalted SHA256 as a deterministic map key for in-memory rate limiting.
-  // The security-sensitive comparison is in validateApiKey() using verifyApiKey().
-  const rateLimitKey = hashApiKey(key);
-  const now = Date.now();
+  try {
+    const redis = getRedisClient();
+    const currentMinute = getCurrentMinute();
+    const rateLimitKey = `${REDIS_RATE_LIMIT_PREFIX}:${keyHash}:${currentMinute}`;
 
-  // --- Atomic in-memory enforcement (synchronous, no race conditions) ---
-  let entry = inMemoryRateLimits.get(rateLimitKey);
+    // Atomic rate limit check using Lua script
+    // Ensures check-and-increment is atomic across concurrent requests
+    const luaScript = `
+      local key = KEYS[1]
+      local limit = tonumber(ARGV[1])
+      local ttl = tonumber(ARGV[2])
 
-  if (!entry || now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
-    // First request or window expired: start new window
-    entry = { windowStart: now, count: 1 };
-    inMemoryRateLimits.set(rateLimitKey, entry);
-  } else {
-    // Within current window: check and increment atomically
-    if (entry.count >= limit) {
-      return { success: false, error: "Rate limit exceeded" };
+      local current = redis.call('GET', key)
+      if current == false then
+        redis.call('SETEX', key, ttl, 1)
+        return {1, limit - 1}
+      end
+
+      local count = tonumber(current)
+      if count >= limit then
+        return {0, 0}
+      end
+
+      redis.call('INCR', key)
+      return {1, limit - count - 1}
+    `;
+
+    const result = await redis.eval(
+      luaScript,
+      1,
+      rateLimitKey,
+      limit.toString(),
+      RATE_LIMIT_WINDOW_SEC.toString(),
+    ) as number[];
+
+    const [allowed, remaining] = result;
+
+    if (allowed === 0) {
+      return storageError("Rate limit exceeded");
     }
-    entry.count++;
-  }
 
-  // --- Best-effort file sync for dashboard display (non-blocking) ---
-  const storeResult = await loadApiKeysStore();
-  if (storeResult.success) {
-    const store = storeResult.data;
-    store.rate_limits[rateLimitKey] = {
-      key_hash: rateLimitKey,
-      window_start: entry.windowStart,
-      request_count: entry.count,
+    const resetTime = (currentMinute + 1) * RATE_LIMIT_WINDOW_SEC;
+
+    return {
+      success: true,
+      data: { remaining, resetTime },
     };
-    // Fire-and-forget: don't block request on file write
-    saveApiKeysStore(store).catch(() => {
-      // Silently ignore file sync errors -- in-memory is the source of truth
-    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return storageError(`Rate limit check failed: ${message}`);
   }
-
-  return { success: true, data: undefined };
 }
 
 /**
@@ -568,12 +525,8 @@ export async function deleteApiKey(key: string): Promise<StorageResult<void>> {
     return { success: false, error: "API key not found" };
   }
 
-  // Remove the key and its rate limit entries
-  const removedKey = store.keys[keyIndex];
+  // Remove the key (rate limits in Redis auto-expire)
   store.keys.splice(keyIndex, 1);
-  if (removedKey) {
-    delete store.rate_limits[removedKey.key_hash];
-  }
 
   return saveApiKeysStore(store);
 }
@@ -598,11 +551,8 @@ export async function deleteApiKeyByHash(
     return { success: false, error: "API key not found" };
   }
 
-  // Remove the key
+  // Remove the key (rate limits in Redis auto-expire)
   store.keys.splice(keyIndex, 1);
-
-  // Also remove any rate limit entries
-  delete store.rate_limits[keyHash];
 
   return saveApiKeysStore(store);
 }

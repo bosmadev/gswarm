@@ -14,17 +14,14 @@ import type {
   ProjectStatus,
   StorageResult,
 } from "../types";
-import { CacheManager, getDataPath, readJsonFile, writeJsonFile } from "./base";
+import { getRedisClient } from "./redis";
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-/** File name for project status storage */
-export const PROJECT_STATUS_FILE = "project-status.json";
-
-/** Cache TTL in milliseconds (30 seconds) */
-export const PROJECT_CACHE_TTL_MS = 30_000;
+/** Redis key prefix for project status storage */
+export const PROJECT_STATUS_PREFIX = "project-status:";
 
 /** Default cooldown configuration for exponential backoff */
 export const DEFAULT_COOLDOWN: CooldownConfig = {
@@ -35,30 +32,62 @@ export const DEFAULT_COOLDOWN: CooldownConfig = {
 };
 
 // =============================================================================
-// Types
+// Helper Functions
 // =============================================================================
 
 /**
- * Structure for the project status file
+ * Get the Redis key for a specific project
  */
-export interface ProjectStatusMap {
-  projects: Record<string, ProjectStatus>;
-  updated_at: number;
+function getProjectKey(projectId: string): string {
+  return `${PROJECT_STATUS_PREFIX}${projectId}`;
 }
 
-// =============================================================================
-// In-memory cache
-// =============================================================================
-
-const projectCache = new CacheManager<Map<string, ProjectStatus>>(
-  PROJECT_CACHE_TTL_MS,
-);
+/**
+ * Convert ProjectStatus to Redis hash format
+ */
+function statusToHash(status: ProjectStatus): Record<string, string> {
+  return {
+    projectId: status.projectId,
+    lastUsedAt: status.lastUsedAt.toString(),
+    lastSuccessAt: status.lastSuccessAt.toString(),
+    lastErrorAt: status.lastErrorAt.toString(),
+    successCount: status.successCount.toString(),
+    errorCount: status.errorCount.toString(),
+    consecutiveErrors: status.consecutiveErrors.toString(),
+    cooldownUntil: status.cooldownUntil.toString(),
+    ...(status.lastErrorType && { lastErrorType: status.lastErrorType }),
+    ...(status.quotaResetTime && {
+      quotaResetTime: status.quotaResetTime.toString(),
+    }),
+    ...(status.quotaResetReason && {
+      quotaResetReason: status.quotaResetReason,
+    }),
+  };
+}
 
 /**
- * Get the file path for project status storage
+ * Convert Redis hash to ProjectStatus
  */
-function getProjectStatusPath(): string {
-  return getDataPath(PROJECT_STATUS_FILE);
+function hashToStatus(
+  hash: Record<string, string>,
+): ProjectStatus | null {
+  if (!hash.projectId) return null;
+
+  return {
+    projectId: hash.projectId,
+    lastUsedAt: Number.parseInt(hash.lastUsedAt || "0"),
+    lastSuccessAt: Number.parseInt(hash.lastSuccessAt || "0"),
+    lastErrorAt: Number.parseInt(hash.lastErrorAt || "0"),
+    successCount: Number.parseInt(hash.successCount || "0"),
+    errorCount: Number.parseInt(hash.errorCount || "0"),
+    consecutiveErrors: Number.parseInt(hash.consecutiveErrors || "0"),
+    cooldownUntil: Number.parseInt(hash.cooldownUntil || "0"),
+    lastErrorType: hash.lastErrorType as ProjectErrorType | undefined,
+    quotaResetTime: hash.quotaResetTime
+      ? Number.parseInt(hash.quotaResetTime)
+      : undefined,
+    quotaResetReason: hash.quotaResetReason,
+  };
 }
 
 // =============================================================================
@@ -66,59 +95,95 @@ function getProjectStatusPath(): string {
 // =============================================================================
 
 /**
- * Load all project statuses from storage
+ * Load all project statuses from Redis
+ * Uses SCAN to find all project-status:* keys
  */
 export async function loadProjectStatuses(): Promise<
   StorageResult<Map<string, ProjectStatus>>
 > {
-  // Return cached data if valid
-  const cached = projectCache.get();
-  if (cached) {
-    return { success: true, data: cached };
+  try {
+    const redis = getRedisClient();
+    const statusMap = new Map<string, ProjectStatus>();
+
+    // Use SCAN to find all project keys
+    const pattern = `${PROJECT_STATUS_PREFIX}*`;
+    let cursor = "0";
+
+    do {
+      const [nextCursor, keys] = await redis.scan(
+        cursor,
+        "MATCH",
+        pattern,
+        "COUNT",
+        100,
+      );
+      cursor = nextCursor;
+
+      // Fetch all hashes in a pipeline for efficiency
+      if (keys.length > 0) {
+        const pipeline = redis.pipeline();
+        for (const key of keys) {
+          pipeline.hgetall(key);
+        }
+        const results = await pipeline.exec();
+
+        if (results) {
+          for (let i = 0; i < results.length; i++) {
+            const [err, hash] = results[i];
+            if (!err && hash) {
+              const status = hashToStatus(hash as Record<string, string>);
+              if (status) {
+                statusMap.set(status.projectId, status);
+              }
+            }
+          }
+        }
+      }
+    } while (cursor !== "0");
+
+    return { success: true, data: statusMap };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown Redis error";
+    return {
+      success: false,
+      error: `Failed to load project statuses: ${errorMessage}`,
+    };
   }
-
-  const filePath = getProjectStatusPath();
-  const result = await readJsonFile<ProjectStatusMap>(filePath);
-
-  if (!result.success) {
-    // File not found is not an error - return empty map
-    if (result.error?.startsWith("File not found")) {
-      const emptyMap = new Map<string, ProjectStatus>();
-      projectCache.set(emptyMap);
-      return { success: true, data: emptyMap };
-    }
-    return result;
-  }
-
-  // Convert to Map
-  const statusMap = new Map<string, ProjectStatus>();
-  for (const [projectId, status] of Object.entries(result.data.projects)) {
-    statusMap.set(projectId, status);
-  }
-
-  // Update cache
-  projectCache.set(statusMap);
-
-  return { success: true, data: statusMap };
 }
 
 /**
- * Get project status by ID
+ * Get project status by ID from Redis
  */
 export async function getProjectStatus(
   projectId: string,
 ): Promise<StorageResult<ProjectStatus>> {
-  const loadResult = await loadProjectStatuses();
-  if (!loadResult.success) {
-    return loadResult;
-  }
+  try {
+    const redis = getRedisClient();
+    const key = getProjectKey(projectId);
+    const hash = await redis.hgetall(key);
 
-  const status = loadResult.data.get(projectId);
-  if (!status) {
-    return { success: false, error: `Project ${projectId} not found` };
-  }
+    if (!hash || Object.keys(hash).length === 0) {
+      return { success: false, error: `Project ${projectId} not found` };
+    }
 
-  return { success: true, data: status };
+    const status = hashToStatus(hash);
+    if (!status) {
+      return {
+        success: false,
+        error: `Invalid project status data for ${projectId}`,
+      };
+    }
+
+    return { success: true, data: status };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown Redis error";
+    return {
+      success: false,
+      error: `Failed to get project status: ${errorMessage}`,
+    };
+  }
 }
 
 /**
@@ -138,55 +203,58 @@ export function createDefaultStatus(projectId: string): ProjectStatus {
 }
 
 /**
- * Save a single project status to storage
+ * Save a single project status to Redis
  */
 export async function saveProjectStatus(
   status: ProjectStatus,
 ): Promise<StorageResult<void>> {
-  const loadResult = await loadProjectStatuses();
-  const statusMap = loadResult.success
-    ? loadResult.data
-    : new Map<string, ProjectStatus>();
-  statusMap.set(status.projectId, status);
+  try {
+    const redis = getRedisClient();
+    const key = getProjectKey(status.projectId);
+    const hash = statusToHash(status);
 
-  // Update cache
-  projectCache.set(statusMap);
+    // Delete existing hash and set new one
+    await redis.del(key);
+    await redis.hset(key, hash);
 
-  // Convert to storage format
-  const storageData: ProjectStatusMap = {
-    projects: Object.fromEntries(statusMap),
-    updated_at: Date.now(),
-  };
-
-  return writeJsonFile(getProjectStatusPath(), storageData);
+    return { success: true, data: undefined };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown Redis error";
+    return {
+      success: false,
+      error: `Failed to save project status: ${errorMessage}`,
+    };
+  }
 }
 
 /**
- * Save multiple project statuses to storage
+ * Save multiple project statuses to Redis using a pipeline for efficiency
  */
 export async function saveProjectStatuses(
   statuses: ProjectStatus[],
 ): Promise<StorageResult<void>> {
-  const loadResult = await loadProjectStatuses();
-  const statusMap = loadResult.success
-    ? loadResult.data
-    : new Map<string, ProjectStatus>();
+  try {
+    const redis = getRedisClient();
+    const pipeline = redis.pipeline();
 
-  // Update all statuses
-  for (const status of statuses) {
-    statusMap.set(status.projectId, status);
+    for (const status of statuses) {
+      const key = getProjectKey(status.projectId);
+      const hash = statusToHash(status);
+      pipeline.del(key);
+      pipeline.hset(key, hash);
+    }
+
+    await pipeline.exec();
+    return { success: true, data: undefined };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown Redis error";
+    return {
+      success: false,
+      error: `Failed to save project statuses: ${errorMessage}`,
+    };
   }
-
-  // Update cache
-  projectCache.set(statusMap);
-
-  // Convert to storage format
-  const storageData: ProjectStatusMap = {
-    projects: Object.fromEntries(statusMap),
-    updated_at: Date.now(),
-  };
-
-  return writeJsonFile(getProjectStatusPath(), storageData);
 }
 
 /**
@@ -225,7 +293,7 @@ export async function recordProjectSuccess(
 
   const saveResult = await saveProjectStatus(status);
   if (!saveResult.success) {
-    return saveResult;
+    return { success: false, error: saveResult.error };
   }
 
   return { success: true, data: status };
@@ -302,7 +370,7 @@ export async function recordProjectError(
 
   const saveResult = await saveProjectStatus(status);
   if (!saveResult.success) {
-    return saveResult;
+    return { success: false, error: saveResult.error };
   }
 
   return { success: true, data: status };
@@ -351,13 +419,13 @@ export async function getAvailableProjects(): Promise<
 > {
   const loadResult = await loadProjectStatuses();
   if (!loadResult.success) {
-    return loadResult;
+    return { success: false, error: loadResult.error };
   }
 
   const now = Date.now();
   const available: ProjectStatus[] = [];
 
-  for (const status of loadResult.data.values()) {
+  for (const status of Array.from(loadResult.data.values())) {
     const inCooldown =
       now < status.cooldownUntil ||
       (status.quotaResetTime ? now < status.quotaResetTime : false);
@@ -422,17 +490,18 @@ export async function clearProjectCooldown(
 
   const saveResult = await saveProjectStatus(status);
   if (!saveResult.success) {
-    return saveResult;
+    return { success: false, error: saveResult.error };
   }
 
   return { success: true, data: status };
 }
 
 /**
- * Invalidate the in-memory cache, forcing a reload from disk
+ * Invalidate the in-memory cache, forcing a reload from Redis
+ * Note: With Redis, this is a no-op since Redis is the source of truth
  */
 export function invalidateProjectCache(): void {
-  projectCache.invalidate();
+  // No-op: Redis is the cache, no in-memory cache to clear
 }
 
 // =============================================================================
@@ -481,7 +550,7 @@ export async function updateProjectStatus(
 
   const saveResult = await saveProjectStatus(status);
   if (!saveResult.success) {
-    return saveResult;
+    return { success: false, error: saveResult.error };
   }
 
   return { success: true, data: status };
@@ -499,17 +568,46 @@ export async function getAllProjectStatuses(): Promise<ProjectStatus[]> {
 }
 
 /**
- * Clear all project status data
+ * Clear all project status data from Redis
  */
 export async function clearAllProjectStatus(): Promise<StorageResult<void>> {
-  projectCache.set(new Map());
+  try {
+    const redis = getRedisClient();
+    const pattern = `${PROJECT_STATUS_PREFIX}*`;
+    let cursor = "0";
+    const keysToDelete: string[] = [];
 
-  const storageData: ProjectStatusMap = {
-    projects: {},
-    updated_at: Date.now(),
-  };
+    // Use SCAN to find all project keys
+    do {
+      const [nextCursor, keys] = await redis.scan(
+        cursor,
+        "MATCH",
+        pattern,
+        "COUNT",
+        100,
+      );
+      cursor = nextCursor;
+      keysToDelete.push(...keys);
+    } while (cursor !== "0");
 
-  return writeJsonFile(getProjectStatusPath(), storageData);
+    // Delete all keys in a pipeline
+    if (keysToDelete.length > 0) {
+      const pipeline = redis.pipeline();
+      for (const key of keysToDelete) {
+        pipeline.del(key);
+      }
+      await pipeline.exec();
+    }
+
+    return { success: true, data: undefined };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown Redis error";
+    return {
+      success: false,
+      error: `Failed to clear project statuses: ${errorMessage}`,
+    };
+  }
 }
 
 // =============================================================================

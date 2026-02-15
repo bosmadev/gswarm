@@ -52,8 +52,8 @@ export async function POST(request: NextRequest) {
 
     const { username, password } = validation.data;
 
-    // Validate credentials
-    const result = validateCredentials(username, password);
+    // Validate credentials (now async - reads from Redis)
+    const result = await validateCredentials(username, password);
 
     if (!result.valid) {
       return NextResponse.json(

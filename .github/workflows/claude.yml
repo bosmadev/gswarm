@@ -10,7 +10,6 @@
 #
 # Required Secrets:
 #   - CLAUDE_CODE_OAUTH_TOKEN: OAuth token from `claude auth login` + `/token sync`
-#   - ADMIN_TOKEN: GitHub PAT with repo scope (for cloning bosmadev/claude config)
 #   - GITHUB_TOKEN: Auto-provided by GitHub Actions
 #
 # Documentation: See ~/.claude/CLAUDE.md § GitHub Actions Workflow Template
@@ -118,50 +117,24 @@ jobs:
       cancel-in-progress: true  # New push invalidates old review
     timeout-minutes: ${{ github.event.inputs.timeout && github.event.inputs.timeout <= 60 && github.event.inputs.timeout || 30 }}
     permissions:
-      id-token: write  # Required for Claude OAuth OIDC token exchange
-      contents: read   # Read code only, no write access
-      issues: write
-      pull-requests: write
+      contents: read  # Read code only, no write access
 
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 50  # Limit to 50 commits for performance, sufficient for most reviews
 
-      - name: Clone Claude config
-        run: |
-          # Clone central config repo to ~/.claude — gives @claude the same
-          # CLAUDE.md, agent configs, and scripts as local CLI sessions.
-          # Runner is ephemeral — ~/.claude is destroyed after job finishes.
-          git clone --depth 1 \
-            https://x-access-token:${{ secrets.ADMIN_TOKEN }}@github.com/bosmadev/claude.git \
-            ~/.claude 2>/dev/null || echo "::warning::Could not clone bosmadev/claude config"
-
-          # Strip Windows-specific hooks and env from settings.json — they break on Linux runners.
-          # Hooks use %USERPROFILE% paths and PYTHONPYCACHEPREFIX=C:/... which don't exist on Linux.
-          # Keep the rest (permissions, allowed tools, env vars) but remove hooks + Windows paths.
-          if [ -f ~/.claude/settings.json ]; then
-            python3 -c "
-import json, sys
-with open(sys.argv[1]) as f: s = json.load(f)
-s.pop('hooks', None)
-env = s.get('env', {})
-env.pop('PYTHONPYCACHEPREFIX', None)
-with open(sys.argv[1], 'w') as f: json.dump(s, f, indent=2)
-print('Stripped hooks + Windows env from settings.json for CI')
-" ~/.claude/settings.json
-          fi
-
-      - name: Setup Node.js
+      - name: Setup Node.js with caching
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # No cache — claude job only uses npx for MCP servers, no project deps installed
+          cache: 'npm'
 
       - name: Validate Required Packages
         run: |
+          # Verify packages exist in npm registry before installation
           npm view @modelcontextprotocol/server-sequential-thinking version || exit 1
-          npm view @upstash/context7-mcp version || exit 1
+          npm view @context7/mcp-server version || exit 1
 
       - name: Create MCP Configuration
         run: |
@@ -174,13 +147,13 @@ print('Stripped hooks + Windows env from settings.json for CI')
               },
               "context7": {
                 "command": "npx",
-                "args": ["-y", "@upstash/context7-mcp"]
+                "args": ["-y", "@context7/mcp-server"]
               }
             }
           }
           EOF
-          # NOTE: Only context7 included for CI safety
-          # Playwriter excluded - risk of infinite loops burning minutes
+          # NOTE: Only sequential-thinking and context7 included for CI safety
+          # Serena/Playwriter excluded - risk of infinite loops burning minutes
 
       - name: Validate Claude Token Secret
         run: |
@@ -202,7 +175,7 @@ print('Stripped hooks + Windows env from settings.json for CI')
           branch_prefix: ""
           branch_name_template: "{{entityType}}-{{entityNumber}}-{{description}}"
           allowed_bots: "dependabot[bot],renovate[bot]"
-          track_progress: ${{ github.event_name == 'pull_request' && contains(fromJSON('["opened","synchronize","ready_for_review","reopened"]'), github.event.action) }}
+          track_progress: true
           use_sticky_comment: true
           include_fix_links: true
           use_commit_signing: true
@@ -270,8 +243,8 @@ print('Stripped hooks + Windows env from settings.json for CI')
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 50  # Enough history to find all new commits since last bot commit
-          token: ${{ secrets.ADMIN_TOKEN || github.token }}
+          fetch-depth: 2
+          token: ${{ secrets.ADMIN_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -448,56 +421,3 @@ print('Stripped hooks + Windows env from settings.json for CI')
 
             // Clean up temp file
             fs.unlinkSync(notesPath);
-
-  # ============================================
-  # Job 3: Reset Dev Branches to Latest Main
-  # ============================================
-  # After changelog commit and release, force-reset dev branches to include all
-  # auto-generated commits (CHANGELOG, version bump). This replaces the standalone
-  # reset-dev.yml workflow to eliminate the race condition where reset-dev ran
-  # BEFORE the changelog commit was pushed, leaving dev perpetually behind main.
-  reset-dev:
-    name: Reset Dev Branches
-    needs: [changelog, create-release]
-    if: |
-      always() &&
-      github.event_name == 'push' &&
-      needs.changelog.result != 'failure' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 1
-          token: ${{ secrets.ADMIN_TOKEN || github.token }}
-
-      - name: Reset dev branches to latest main
-        env:
-          GH_TOKEN: ${{ secrets.ADMIN_TOKEN || github.token }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Fetch latest main (includes changelog commit from earlier job)
-          git fetch origin main
-          LATEST=$(git rev-parse FETCH_HEAD)
-          echo "Latest main: $(git log -1 --oneline $LATEST)"
-
-          REPO=$(basename "$GITHUB_REPOSITORY")
-          for BRANCH in "${REPO}-dev" "${REPO}-night-dev"; do
-            if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
-              # GUARD: Skip reset if branch has an open PR (prevents wiping unmerged work)
-              OPEN_PR=$(gh pr list --head "$BRANCH" --state open --json number,title -q '.[0]' 2>/dev/null || echo "")
-              if [ -n "$OPEN_PR" ]; then
-                echo "⚠️  SKIPPED $BRANCH — open PR exists: $OPEN_PR"
-                echo "   Reset deferred until PR is merged or closed."
-                continue
-              fi
-              git push --force origin "$LATEST:refs/heads/$BRANCH"
-              echo "✓ Reset $BRANCH to $(git rev-parse --short $LATEST)"
-            else
-              echo "⊘ Branch $BRANCH does not exist, skipping"
-            fi
-          done

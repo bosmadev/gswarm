@@ -1,27 +1,16 @@
 /**
  * @file lib/gswarm/storage/errors.ts
- * @version 1.0
- * @description Error log storage with daily file rotation and caching.
+ * @version 2.0
+ * @description Error log storage with Redis persistence and 30-day TTL.
  *
  * Provides storage operations for recording, querying, and managing
- * error logs with daily file organization and in-memory caching.
+ * error logs with daily organization in Redis and in-memory caching.
  * Supports filtering by type, account, project, and date range.
  */
 
-import { join } from "node:path";
 import type { StorageResult } from "../types";
-import {
-  deleteFile,
-  getFromCache,
-  getStoragePath,
-  getTodayDateString,
-  invalidateCache,
-  invalidateCachePattern,
-  listFiles,
-  readJsonFile,
-  setCache,
-  writeJsonFile,
-} from "./base";
+import { getTodayDateString } from "./base";
+import { getRedisClient } from "./redis";
 
 // =============================================================================
 // TYPES
@@ -121,8 +110,8 @@ export interface QueryErrorsOptions {
 // CONSTANTS
 // =============================================================================
 
-/** Directory for error log files */
-export const ERRORS_DIR = "errors";
+/** TTL for error logs in Redis (30 days) */
+export const ERRORS_TTL_SECONDS = 2592000; // 30 days
 
 /** Cache TTL in milliseconds (30 seconds) */
 export const ERRORS_CACHE_TTL_MS = 30_000;
@@ -130,22 +119,48 @@ export const ERRORS_CACHE_TTL_MS = 30_000;
 /** Maximum errors per day before rotation (prevents unbounded growth) */
 export const MAX_ERRORS_PER_DAY = 10_000;
 
+// In-memory cache for errors by date (reduces Redis round-trips)
+const errorsCacheByDate = new Map<string, { data: DailyErrorLog; expiresAt: number }>();
+
 // =============================================================================
-// CACHE KEY HELPERS
+// CACHE HELPERS
 // =============================================================================
 
 /**
- * Gets the cache key for errors on a specific date
+ * Gets cached errors for a specific date if still valid
  */
-function getErrorsCacheKey(date: string): string {
+function getCachedErrors(date: string): DailyErrorLog | null {
+  const cached = errorsCacheByDate.get(date);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
+  }
+  errorsCacheByDate.delete(date);
+  return null;
+}
+
+/**
+ * Updates the in-memory cache for a specific date
+ */
+function setCachedErrors(date: string, data: DailyErrorLog): void {
+  errorsCacheByDate.set(date, {
+    data,
+    expiresAt: Date.now() + ERRORS_CACHE_TTL_MS,
+  });
+}
+
+/**
+ * Gets the Redis key for errors on a specific date
+ */
+export function getErrorsKey(date: string): string {
   return `errors:${date}`;
 }
 
 /**
  * Gets the file path for errors on a specific date
+ * @deprecated Kept for backward compatibility, use getErrorsKey() instead
  */
 export function getErrorsPath(date: string): string {
-  return getStoragePath(ERRORS_DIR, `${date}.json`);
+  return getErrorsKey(date);
 }
 
 /**
@@ -179,32 +194,34 @@ export async function loadErrorLog(
   date?: string,
 ): Promise<StorageResult<DailyErrorLog>> {
   const targetDate = date || getTodayDateString();
-  const filePath = getErrorsPath(targetDate);
-  const cacheKey = getErrorsCacheKey(targetDate);
 
-  // Check cache
-  const cached = getFromCache<DailyErrorLog>(cacheKey);
+  // Check in-memory cache first
+  const cached = getCachedErrors(targetDate);
   if (cached) {
     return { success: true, data: cached };
   }
 
-  const result = await readJsonFile<DailyErrorLog>(filePath);
+  try {
+    const redis = getRedisClient();
+    const key = getErrorsKey(targetDate);
+    const rawData = await redis.get(key);
 
-  if (!result.success) {
-    if (
-      result.error === "File not found" ||
-      result.error?.includes("File not found")
-    ) {
+    if (!rawData) {
+      // No data for this date - return empty log
       const emptyLog = createEmptyDailyErrorLog(targetDate);
       return { success: true, data: emptyLog };
     }
-    return result;
+
+    const data = JSON.parse(rawData) as DailyErrorLog;
+
+    // Update cache
+    setCachedErrors(targetDate, data);
+
+    return { success: true, data };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to load error log: ${error}` };
   }
-
-  // Update cache
-  setCache(cacheKey, result.data, ERRORS_CACHE_TTL_MS);
-
-  return result;
 }
 
 /**
@@ -266,18 +283,20 @@ export async function recordError(
   dailyLog.errors.push(errorEntry);
   dailyLog.updated_at = now.toISOString();
 
-  // Write to file
-  const filePath = getErrorsPath(errorDate);
-  const writeResult = await writeJsonFile(filePath, dailyLog);
+  // Write to Redis with 30-day TTL
+  try {
+    const redis = getRedisClient();
+    const key = getErrorsKey(errorDate);
+    await redis.set(key, JSON.stringify(dailyLog), "EX", ERRORS_TTL_SECONDS);
 
-  if (!writeResult.success) {
-    return { success: false, error: writeResult.error };
+    // Update cache
+    setCachedErrors(errorDate, dailyLog);
+
+    return { success: true, data: errorEntry };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to record error: ${error}` };
   }
-
-  // Update cache
-  setCache(getErrorsCacheKey(errorDate), dailyLog, ERRORS_CACHE_TTL_MS);
-
-  return { success: true, data: errorEntry };
 }
 
 /**
@@ -403,118 +422,68 @@ export async function getErrorCountsByType(
 export async function clearTodaysErrors(): Promise<StorageResult<void>> {
   const today = getTodayDateString();
   const emptyLog = createEmptyDailyErrorLog(today);
-  const filePath = getErrorsPath(today);
 
-  const writeResult = await writeJsonFile(filePath, emptyLog);
+  try {
+    const redis = getRedisClient();
+    const key = getErrorsKey(today);
+    await redis.set(key, JSON.stringify(emptyLog), "EX", ERRORS_TTL_SECONDS);
 
-  if (!writeResult.success) {
-    return writeResult;
+    // Update cache
+    setCachedErrors(today, emptyLog);
+
+    return { success: true, data: undefined };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to clear today's errors: ${error}` };
   }
-
-  // Update cache
-  setCache(getErrorsCacheKey(today), emptyLog, ERRORS_CACHE_TTL_MS);
-
-  return { success: true, data: undefined };
 }
 
 /**
  * Clears all error logs (all dates)
+ * @deprecated With Redis TTL, this requires scanning all keys which is slow. Use clearTodaysErrors() instead.
  */
 export async function clearAllErrors(): Promise<StorageResult<number>> {
-  const errorsDir = getStoragePath(ERRORS_DIR);
-  const listResult = await listFiles(errorsDir, ".json");
+  try {
+    const redis = getRedisClient();
+    let cursor = "0";
+    let deletedCount = 0;
 
-  if (!listResult.success) {
-    // Directory doesn't exist = nothing to clear
-    if (listResult.error?.includes("not found")) {
-      return { success: true, data: 0 };
-    }
-    return { success: false, error: listResult.error };
-  }
+    // Scan for all errors:* keys and delete them
+    do {
+      const [newCursor, keys] = await redis.scan(cursor, "MATCH", "errors:*", "COUNT", 100);
+      cursor = newCursor;
 
-  let deletedCount = 0;
-  const errors: string[] = [];
+      if (keys.length > 0) {
+        await redis.del(...keys);
+        deletedCount += keys.length;
 
-  for (const file of listResult.data) {
-    const filePath = join(errorsDir, file);
-    const deleteResult = await deleteFile(filePath);
-
-    if (deleteResult.success) {
-      deletedCount++;
-      // Remove from cache
-      const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.json$/);
-      if (dateMatch) {
-        invalidateCache(getErrorsCacheKey(dateMatch[1]));
+        // Invalidate cache for deleted keys
+        for (const key of keys) {
+          const dateMatch = key.match(/^errors:(\d{4}-\d{2}-\d{2})$/);
+          if (dateMatch) {
+            errorsCacheByDate.delete(dateMatch[1]);
+          }
+        }
       }
-    } else if (deleteResult.error) {
-      errors.push(deleteResult.error);
-    }
-  }
+    } while (cursor !== "0");
 
-  if (errors.length > 0) {
-    return {
-      success: false,
-      error: `Deleted ${deletedCount} files but encountered errors: ${errors.join(", ")}`,
-    };
+    return { success: true, data: deletedCount };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to clear all errors: ${error}` };
   }
-
-  return { success: true, data: deletedCount };
 }
 
 /**
  * Cleans up error log files older than the specified number of days
+ * @deprecated With Redis TTL, cleanup happens automatically. This is a no-op for compatibility.
  */
 export async function cleanupOldErrors(
   keepDays = 30,
 ): Promise<StorageResult<number>> {
-  const errorsDir = getStoragePath(ERRORS_DIR);
-  const listResult = await listFiles(errorsDir, ".json");
-
-  if (!listResult.success) {
-    // Directory doesn't exist = nothing to clean
-    if (listResult.error?.includes("not found")) {
-      return { success: true, data: 0 };
-    }
-    return { success: false, error: listResult.error };
-  }
-
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - keepDays);
-  const cutoffStr =
-    cutoffDate.toISOString().split("T")[0] ??
-    cutoffDate.toISOString().slice(0, 10);
-
-  let deletedCount = 0;
-  const errors: string[] = [];
-
-  for (const file of listResult.data) {
-    // Extract date from filename (format: YYYY-MM-DD.json)
-    const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.json$/);
-    if (!dateMatch) continue;
-
-    const fileDate = dateMatch[1];
-    if (fileDate < cutoffStr) {
-      const filePath = join(errorsDir, file);
-      const deleteResult = await deleteFile(filePath);
-
-      if (deleteResult.success) {
-        deletedCount++;
-        // Remove from cache
-        invalidateCache(getErrorsCacheKey(fileDate));
-      } else if (deleteResult.error) {
-        errors.push(deleteResult.error);
-      }
-    }
-  }
-
-  if (errors.length > 0) {
-    return {
-      success: false,
-      error: `Deleted ${deletedCount} files but encountered errors: ${errors.join(", ")}`,
-    };
-  }
-
-  return { success: true, data: deletedCount };
+  // Redis TTL handles automatic cleanup - no manual intervention needed
+  // Return success with 0 deleted files for backward compatibility
+  return { success: true, data: 0 };
 }
 
 /**
@@ -522,9 +491,9 @@ export async function cleanupOldErrors(
  */
 export function invalidateErrorsCache(date?: string): void {
   if (date) {
-    invalidateCache(getErrorsCacheKey(date));
+    errorsCacheByDate.delete(date);
   } else {
     // Clear all errors cache entries
-    invalidateCachePattern(/^errors:/);
+    errorsCacheByDate.clear();
   }
 }

@@ -173,44 +173,107 @@ function safeCompare(a: string, b: string): boolean {
 }
 
 /**
- * Validates admin credentials against environment variables.
+ * Validates admin credentials against Redis-stored credentials.
  * Uses timing-safe comparison to prevent timing attacks.
  */
-export function validateCredentials(
+export async function validateCredentials(
   username: string,
   password: string,
-): { valid: boolean; user?: string } {
-  // Check primary admin credentials
-  const adminUsername = process.env.ADMIN_USERNAME;
-  const adminPassword = process.env.ADMIN_PASSWORD;
+): Promise<{ valid: boolean; user?: string }> {
+  try {
+    // Import dynamically to avoid circular dependencies
+    const { getRedisClient } = await import("@/lib/gswarm/storage/redis");
+    const redis = getRedisClient();
 
-  if (
-    adminUsername &&
-    adminPassword &&
-    safeCompare(username, adminUsername) &&
-    safeCompare(password, adminPassword)
-  ) {
-    return { valid: true, user: username };
-  }
+    // Read admin credentials from Redis key "admin-users"
+    const adminDataStr = await redis.get("admin-users");
+    if (!adminDataStr) {
+      // Fallback to .env for backward compatibility during migration
+      const adminUsername = process.env.ADMIN_USERNAME;
+      const adminPassword = process.env.ADMIN_PASSWORD;
+      const dashboardUsers = process.env.DASHBOARD_USERS;
 
-  // Check DASHBOARD_USERS (format: user1:pass1,user2:pass2)
-  const dashboardUsers = process.env.DASHBOARD_USERS;
-  if (dashboardUsers) {
-    const users = dashboardUsers.split(",");
-    for (const userEntry of users) {
-      const [user, pass] = userEntry.split(":");
       if (
-        user &&
-        pass &&
-        safeCompare(username, user) &&
-        safeCompare(password, pass)
+        adminUsername &&
+        adminPassword &&
+        safeCompare(username, adminUsername) &&
+        safeCompare(password, adminPassword)
       ) {
         return { valid: true, user: username };
       }
-    }
-  }
 
-  return { valid: false };
+      if (dashboardUsers) {
+        const users = dashboardUsers.split(",");
+        for (const userEntry of users) {
+          const [user, pass] = userEntry.split(":");
+          if (
+            user &&
+            pass &&
+            safeCompare(username, user) &&
+            safeCompare(password, pass)
+          ) {
+            return { valid: true, user: username };
+          }
+        }
+      }
+
+      return { valid: false };
+    }
+
+    const adminData = JSON.parse(adminDataStr) as {
+      adminUsername: string;
+      adminPassword: string;
+      dashboardUsers: string;
+    };
+
+    // Check primary admin credentials
+    const adminUsername = adminData.adminUsername;
+    const adminPassword = adminData.adminPassword;
+
+    if (
+      adminUsername &&
+      adminPassword &&
+      safeCompare(username, adminUsername) &&
+      safeCompare(password, adminPassword)
+    ) {
+      return { valid: true, user: username };
+    }
+
+    // Check DASHBOARD_USERS (format: user1:pass1,user2:pass2)
+    const dashboardUsers = adminData.dashboardUsers;
+    if (dashboardUsers) {
+      const users = dashboardUsers.split(",");
+      for (const userEntry of users) {
+        const [user, pass] = userEntry.split(":");
+        if (
+          user &&
+          pass &&
+          safeCompare(username, user) &&
+          safeCompare(password, pass)
+        ) {
+          return { valid: true, user: username };
+        }
+      }
+    }
+
+    return { valid: false };
+  } catch (err) {
+    console.error("[Admin] Failed to validate credentials from Redis:", err);
+    // Fallback to .env on Redis errors
+    const adminUsername = process.env.ADMIN_USERNAME;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (
+      adminUsername &&
+      adminPassword &&
+      safeCompare(username, adminUsername) &&
+      safeCompare(password, adminPassword)
+    ) {
+      return { valid: true, user: username };
+    }
+
+    return { valid: false };
+  }
 }
 
 /**

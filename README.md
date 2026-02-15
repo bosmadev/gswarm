@@ -27,9 +27,14 @@ git clone <repo-url>
 cd gswarm-api
 pnpm install
 
+# Install and start Redis (required for session storage)
+# Windows (via Chocolatey): choco install redis-64
+# macOS: brew install redis && brew services start redis
+# Linux: sudo apt install redis-server && sudo systemctl start redis
+
 # Set up environment
 cp .env.example .env
-# Edit .env with your values
+# Edit .env with your values (including REDIS_URL)
 
 # Development
 pnpm dev
@@ -64,6 +69,9 @@ GLOBAL_URL=http://localhost  # No port here - use GLOBAL_PORT
 
 # Session Secret (generate with: openssl rand -base64 32)
 SESSION_SECRET=your-session-secret
+
+# Redis (required for session storage)
+REDIS_URL=redis://localhost:6379
 ```
 
 ### Google OAuth Setup
@@ -170,6 +178,34 @@ node --experimental-transform-types lib/gswarm/cli.ts projects   # List projects
 | **TypeScript** | Type checking (`pnpm tsc`) |
 | **Vitest** | Unit testing |
 
+## Contributing
+
+We welcome contributions! To contribute:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Make your changes
+4. Run validation: `pnpm validate`
+5. Commit your changes
+6. Push to your fork
+7. Open a Pull Request targeting `main`
+
+Please ensure all tests pass and code follows our formatting standards (enforced by Biome).
+
 ## License
 
-All rights reserved.
+**GNU Affero General Public License v3.0 (AGPL-3.0)**
+
+This project is licensed under AGPL-3.0. Key terms:
+
+| ✅ Permitted | ❌ Restricted | ⚠️ Required |
+|-------------|--------------|------------|
+| Commercial use | Closed-source modifications | Disclose source |
+| Modification | Proprietary SaaS forks | State changes |
+| Distribution | | License + copyright notice |
+| Private use | | Same license for derivatives |
+| | | Network use = distribution |
+
+**Network Use Clause:** If you run this software as a network service (API, SaaS), you MUST make the source code available to users.
+
+See [LICENSE](./LICENSE) for full terms.

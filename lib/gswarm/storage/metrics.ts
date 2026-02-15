@@ -1,14 +1,13 @@
 /**
  * @file lib/gswarm/storage/metrics.ts
- * @version 1.0
- * @description Metrics storage with write batching and real-time aggregation.
+ * @version 2.0
+ * @description Metrics storage with Redis persistence and 30-day TTL.
  *
  * Records per-request metrics and maintains real-time aggregated statistics
- * by endpoint, account, and project. Uses deferred disk writes to avoid
- * blocking the request path, with an in-memory cache as the source of truth.
+ * by endpoint, account, and project. Uses Redis for persistent storage with
+ * automatic 30-day expiration via TTL.
  */
 
-import { join } from "node:path";
 import type {
   AggregatedMetrics,
   DailyMetrics,
@@ -17,76 +16,54 @@ import type {
   RequestMetric,
   StorageResult,
 } from "../types";
-import {
-  CacheManager,
-  deleteFile,
-  getStoragePath,
-  getTodayDateString,
-  listFiles,
-  readJsonFile,
-  writeJsonFile,
-} from "./base";
+import { getTodayDateString } from "./base";
+import { getRedisClient } from "./redis";
 
 // Re-export getTodayDateString for backward compatibility
 export { getTodayDateString } from "./base";
 
 // Constants
-export const METRICS_DIR = "metrics";
-export const METRICS_CACHE_TTL_MS = 10000; // 10 seconds
+export const METRICS_TTL_SECONDS = 2592000; // 30 days
+export const METRICS_CACHE_TTL_MS = 10000; // 10 seconds (in-memory cache)
 
-// In-memory cache for metrics by date
-const metricsCacheByDate = new Map<string, CacheManager<DailyMetrics>>();
+// In-memory cache for metrics by date (reduces Redis round-trips)
+const metricsCacheByDate = new Map<string, { data: DailyMetrics; expiresAt: number }>();
 
 /**
- * Gets or creates a CacheManager for a specific date
+ * Gets cached metrics for a specific date if still valid
  */
-function getMetricsCacheForDate(date: string): CacheManager<DailyMetrics> {
-  let cacheManager = metricsCacheByDate.get(date);
-  if (!cacheManager) {
-    cacheManager = new CacheManager<DailyMetrics>(METRICS_CACHE_TTL_MS);
-    metricsCacheByDate.set(date, cacheManager);
+function getCachedMetrics(date: string): DailyMetrics | null {
+  const cached = metricsCacheByDate.get(date);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
   }
-  return cacheManager;
+  metricsCacheByDate.delete(date);
+  return null;
 }
 
-// =============================================================================
-// Write batching for metrics (avoids disk write on every request)
-// =============================================================================
-
-/** Pending flush timers keyed by file path */
-const pendingFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-/** Flush delay in milliseconds - batches writes within this window */
-const METRICS_FLUSH_DELAY_MS = 500;
+/**
+ * Updates the in-memory cache for a specific date
+ */
+function setCachedMetrics(date: string, data: DailyMetrics): void {
+  metricsCacheByDate.set(date, {
+    data,
+    expiresAt: Date.now() + METRICS_CACHE_TTL_MS,
+  });
+}
 
 /**
- * Schedules a deferred write for metrics data.
- * If multiple metrics arrive within the flush window, only one write occurs.
+ * Gets the Redis key for metrics on a specific date
  */
-function scheduleMetricsFlush(filePath: string, data: DailyMetrics): void {
-  // Clear any existing pending flush for this file
-  const existing = pendingFlushTimers.get(filePath);
-  if (existing) {
-    clearTimeout(existing);
-  }
-
-  // Schedule a new flush
-  const timer = setTimeout(() => {
-    pendingFlushTimers.delete(filePath);
-    writeJsonFile(filePath, data).catch(() => {
-      // Write failures are non-fatal for the request path;
-      // the in-memory cache is already updated.
-    });
-  }, METRICS_FLUSH_DELAY_MS);
-
-  pendingFlushTimers.set(filePath, timer);
+export function getMetricsKey(date: string): string {
+  return `metrics:${date}`;
 }
 
 /**
  * Gets the file path for metrics on a specific date
+ * @deprecated Kept for backward compatibility, use getMetricsKey() instead
  */
 export function getMetricsPath(date: string): string {
-  return getStoragePath(METRICS_DIR, `${date}.json`);
+  return getMetricsKey(date);
 }
 
 /**
@@ -319,35 +296,40 @@ export async function loadMetrics(
   date?: string,
 ): Promise<StorageResult<DailyMetrics>> {
   const targetDate = date || getTodayDateString();
-  const filePath = getMetricsPath(targetDate);
-  const cacheManager = getMetricsCacheForDate(targetDate);
 
-  // Check cache
-  const cached = cacheManager.get();
+  // Check in-memory cache first
+  const cached = getCachedMetrics(targetDate);
   if (cached) {
     return { success: true, data: cached };
   }
 
-  const result = await readJsonFile<DailyMetrics>(filePath);
+  try {
+    const redis = getRedisClient();
+    const key = getMetricsKey(targetDate);
+    const rawData = await redis.get(key);
 
-  if (!result.success) {
-    if (result.error?.startsWith("File not found")) {
+    if (!rawData) {
+      // No data for this date - return empty metrics
       const emptyMetrics = createEmptyDailyMetrics(targetDate);
       return { success: true, data: emptyMetrics };
     }
-    return result;
+
+    const data = JSON.parse(rawData) as DailyMetrics;
+
+    // Update cache
+    setCachedMetrics(targetDate, data);
+
+    return { success: true, data };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to load metrics: ${error}` };
   }
-
-  // Update cache
-  cacheManager.set(result.data);
-
-  return result;
 }
 
 /**
  * Records a new request metric and updates aggregated stats in real-time.
  * The in-memory cache is updated immediately for read consistency, while
- * the disk write is deferred via batching to avoid blocking the response.
+ * Redis is updated directly (no batching - Redis is fast enough).
  *
  * @param metric - The request metric to record
  * @returns Success or error result
@@ -392,14 +374,18 @@ export async function recordMetric(
   dailyMetrics.updated_at = new Date().toISOString();
 
   // Update cache immediately so reads are consistent
-  const cacheManager = getMetricsCacheForDate(metricDate);
-  cacheManager.set(dailyMetrics);
+  setCachedMetrics(metricDate, dailyMetrics);
 
-  // Defer disk write to avoid blocking the response hot path
-  const filePath = getMetricsPath(metricDate);
-  scheduleMetricsFlush(filePath, dailyMetrics);
-
-  return { success: true, data: undefined };
+  // Write to Redis with 30-day TTL
+  try {
+    const redis = getRedisClient();
+    const key = getMetricsKey(metricDate);
+    await redis.set(key, JSON.stringify(dailyMetrics), "EX", METRICS_TTL_SECONDS);
+    return { success: true, data: undefined };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to record metric: ${error}` };
+  }
 }
 
 /**
@@ -556,56 +542,12 @@ export async function predictQuotaExhaustion(
 
 /**
  * Cleans up metrics files older than the specified number of days
+ * @deprecated With Redis TTL, cleanup happens automatically. This is a no-op for compatibility.
  */
 export async function cleanupOldMetrics(
   keepDays = 30,
 ): Promise<StorageResult<number>> {
-  const metricsDir = getStoragePath(METRICS_DIR);
-  const listResult = await listFiles(metricsDir, ".json");
-
-  if (!listResult.success) {
-    return { success: false, error: listResult.error };
-  }
-
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - keepDays);
-  const cutoffStr =
-    cutoffDate.toISOString().split("T")[0] ??
-    cutoffDate.toISOString().slice(0, 10);
-
-  let deletedCount = 0;
-  const errors: string[] = [];
-
-  for (const file of listResult.data) {
-    // Extract date from filename (format: YYYY-MM-DD.json)
-    const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.json$/);
-    if (!dateMatch) continue;
-
-    const fileDate = dateMatch[1];
-    if (fileDate < cutoffStr) {
-      const filePath = join(metricsDir, file);
-      const deleteResult = await deleteFile(filePath);
-
-      if (deleteResult.success) {
-        deletedCount++;
-        // Invalidate cache for this date
-        const cacheManager = metricsCacheByDate.get(fileDate);
-        if (cacheManager) {
-          cacheManager.invalidate();
-          metricsCacheByDate.delete(fileDate);
-        }
-      } else {
-        errors.push(deleteResult.error);
-      }
-    }
-  }
-
-  if (errors.length > 0) {
-    return {
-      success: false,
-      error: `Deleted ${deletedCount} files but encountered errors: ${errors.join(", ")}`,
-    };
-  }
-
-  return { success: true, data: deletedCount };
+  // Redis TTL handles automatic cleanup - no manual intervention needed
+  // Return success with 0 deleted files for backward compatibility
+  return { success: true, data: 0 };
 }
