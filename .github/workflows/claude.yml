@@ -10,6 +10,7 @@
 #
 # Required Secrets:
 #   - CLAUDE_CODE_OAUTH_TOKEN: OAuth token from `claude auth login` + `/token sync`
+#   - ADMIN_TOKEN: GitHub PAT with repo scope (for cloning bosmadev/claude config)
 #   - GITHUB_TOKEN: Auto-provided by GitHub Actions
 #
 # Documentation: See ~/.claude/CLAUDE.md § GitHub Actions Workflow Template
@@ -124,6 +125,15 @@ jobs:
         with:
           fetch-depth: 50  # Limit to 50 commits for performance, sufficient for most reviews
 
+      - name: Clone Claude config
+        run: |
+          # Clone central config repo to ~/.claude — gives @claude the same
+          # CLAUDE.md, agent configs, and scripts as local CLI sessions.
+          # Runner is ephemeral — ~/.claude is destroyed after job finishes.
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.ADMIN_TOKEN }}@github.com/bosmadev/claude.git \
+            ~/.claude 2>/dev/null || echo "::warning::Could not clone bosmadev/claude config"
+
       - name: Setup Node.js with caching
         uses: actions/setup-node@v4
         with:
@@ -152,8 +162,8 @@ jobs:
             }
           }
           EOF
-          # NOTE: Only sequential-thinking and context7 included for CI safety
-          # Serena/Playwriter excluded - risk of infinite loops burning minutes
+          # NOTE: Only context7 included for CI safety
+          # Playwriter excluded - risk of infinite loops burning minutes
 
       - name: Validate Claude Token Secret
         run: |
@@ -243,8 +253,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
-          token: ${{ secrets.ADMIN_TOKEN }}
+          fetch-depth: 50  # Enough history to find all new commits since last bot commit
+          token: ${{ secrets.ADMIN_TOKEN || github.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -423,7 +433,7 @@ jobs:
             fs.unlinkSync(notesPath);
 
   # ============================================
-  # Job 4: Reset Dev Branches to Latest Main
+  # Job 3: Reset Dev Branches to Latest Main
   # ============================================
   # After changelog commit and release, force-reset dev branches to include all
   # auto-generated commits (CHANGELOG, version bump). This replaces the standalone
@@ -444,7 +454,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 1
-          token: ${{ secrets.ADMIN_TOKEN }}
+          token: ${{ secrets.ADMIN_TOKEN || github.token }}
 
       - name: Reset dev branches to latest main
         run: |
