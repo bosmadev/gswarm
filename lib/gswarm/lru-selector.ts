@@ -113,34 +113,6 @@ function calculateHealthScore(
 }
 
 /**
- * Parse rate limit reset time from 429 error metadata
- *
- * Handles formats:
- * - "Your quota will reset after 3h 21m 10s"
- * - "21h10m20s"
- * - "10s"
- *
- * @param message - Error message containing reset time
- * @returns Duration in milliseconds, or null if parsing failed
- */
-export function parseResetTime(message: string): number | null {
-  // Extract time components
-  const hoursMatch = message.match(/(\d+)h/);
-  const minutesMatch = message.match(/(\d+)m/);
-  const secondsMatch = message.match(/(\d+)s/);
-
-  const hours = hoursMatch ? Number.parseInt(hoursMatch[1], 10) : 0;
-  const minutes = minutesMatch ? Number.parseInt(minutesMatch[1], 10) : 0;
-  const seconds = secondsMatch ? Number.parseInt(secondsMatch[1], 10) : 0;
-
-  if (hours === 0 && minutes === 0 && seconds === 0) {
-    return null; // No valid time found
-  }
-
-  return (hours * 3600 + minutes * 60 + seconds) * 1000;
-}
-
-/**
  * Select the best available project based on hybrid LRU rotation with health scoring
  *
  * Selection algorithm:
@@ -332,87 +304,6 @@ export async function markProjectUsed(projectId: string): Promise<void> {
   consoleDebug(
     PREFIX.DEBUG,
     `[LruSelector] Marked project ${projectId} as used (count: ${successCount})`,
-  );
-}
-
-/**
- * Mark a project on cooldown with optional rate limit reset time
- *
- * @param projectId - The ID of the project to mark on cooldown
- * @param durationMs - Cooldown duration in milliseconds
- * @param resetMessage - Optional 429 error message for parsing reset time
- *
- * @example
- * ```ts
- * await markProjectCooldown("my-project-123", 30000, "Your quota will reset after 21h10m20s");
- * ```
- */
-export async function markProjectCooldown(
-  projectId: string,
-  durationMs: number,
-  resetMessage?: string,
-): Promise<void> {
-  let cooldownUntil = Date.now() + durationMs;
-
-  // Try to parse reset time from message if provided
-  if (resetMessage) {
-    const resetDuration = parseResetTime(resetMessage);
-    if (resetDuration) {
-      cooldownUntil = Date.now() + resetDuration;
-      consoleDebug(
-        PREFIX.DEBUG,
-        `[LruSelector] Parsed reset time: ${resetDuration}ms from message`,
-      );
-    }
-  }
-
-  await updateProjectStatus(projectId, {
-    cooldownUntil,
-    quotaResetTime: cooldownUntil,
-    quotaResetReason: resetMessage,
-  });
-
-  // Invalidate cache if the cooldown project was cached
-  if (selectionCache?.project.project_id === projectId) {
-    selectionCache = null;
-  }
-
-  consoleDebug(
-    PREFIX.DEBUG,
-    `[LruSelector] Marked project ${projectId} on cooldown until ${new Date(cooldownUntil).toISOString()}`,
-  );
-}
-
-/**
- * Record an error for a project
- *
- * @param projectId - The ID of the project that encountered an error
- * @param statusCode - HTTP status code (429 for rate limit, etc.)
- * @param errorType - Type of error encountered
- *
- * @example
- * ```ts
- * await recordProjectError("my-project-123", 429, "rate_limit");
- * ```
- */
-export async function recordProjectError(
-  projectId: string,
-  _statusCode: number,
-  errorType: string,
-): Promise<void> {
-  const status = await getProjectStatus(projectId);
-  const errorCount = (status?.errorCount ?? 0) + 1;
-  const consecutiveErrors = (status?.consecutiveErrors ?? 0) + 1;
-
-  await updateProjectStatus(projectId, {
-    errorCount,
-    consecutiveErrors,
-    lastErrorAt: Date.now(),
-  });
-
-  consoleDebug(
-    PREFIX.DEBUG,
-    `[LruSelector] Recorded error for project ${projectId} (${errorType}, consecutive: ${consecutiveErrors})`,
   );
 }
 

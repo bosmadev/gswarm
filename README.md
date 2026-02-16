@@ -15,6 +15,9 @@ Pool multiple Gmail accounts to multiply your free-tier quota.
 
 ![Next.js](https://img.shields.io/badge/Next.js-16+-black?logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9+-3178C6?logo=typescript)
+![Redis](https://img.shields.io/badge/Redis-Upstash%20%7C%20self--hosted-DC382D?logo=redis)
+![Biome](https://img.shields.io/badge/Biome-linting-60A5FA?logo=biome)
+![Vitest](https://img.shields.io/badge/Vitest-testing-6E9F18?logo=vitest)
 ![License](https://img.shields.io/badge/License-AGPL--3.0-blue)
 
 </div>
@@ -32,12 +35,16 @@ GSwarm is an OpenAI-compatible API proxy that routes requests through Google's f
 | Gemini 2.5 Flash | ~250 RPM | ~5,000 RPD | ~1,680/acc |
 | Gemini 2.5 Pro | ~130 RPM | ~211 RPD | ~70-80/acc |
 | Gemini 3 Flash Preview | ~300 RPM | ~5,880 RPD | ~1,960/acc |
-| Gemini 3 Pro Preview | — | ~210 RPD | ~70-80/acc |
+| Gemini 3 Pro Preview* | — | ~210 RPD | ~70-80/acc |
+
+\*Requires Google AI Pro subscription ($20/mo)
+
+Each model has separate quotas per account per day — exhausting Flash quota doesn't affect Pro quota.
 
 ## Quick Example
 
 ```bash
-curl http://localhost:3001/v1/chat/completions \
+curl http://localhost:3000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-gswarm-your-key" \
   -d '{
@@ -76,7 +83,7 @@ graph TD
     E --> F["Gemini Models"]
 
     D --> G(["Rate Limited?<br/>(429)"])
-    G -->|Yes| H["Apply Cooldown<br/>(120s default)"]
+    G -->|Yes| H["Apply Cooldown<br/>(60s + backoff)"]
     H --> C
     G -->|No| E
 
@@ -107,10 +114,53 @@ graph TD
 **How it works:**
 
 1. **Request arrives** at `/v1/chat/completions` (OpenAI-compatible)
-2. **LRU selector** picks the healthiest project (success rate + cooldown scoring)
+2. **LRU selector** picks the healthiest project (composite health scoring)
 3. **Token manager** provides a valid OAuth token (auto-refresh)
 4. **Request proxied** to Google's CloudCode PA endpoint
 5. **On 429/error** — automatic failover to next project/account
+
+---
+
+## API Endpoints
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/v1/chat/completions` | API Key | OpenAI-compatible chat completions |
+| POST | `/api/gswarm/generate` | API Key | Direct Gemini generation |
+| POST | `/api/gswarm/chat` | API Key | Multi-turn chat |
+| GET | `/api/gswarm/status` | API Key / Session | System health |
+| GET | `/api/gswarm/accounts` | API Key / Session | OAuth accounts list |
+| POST | `/api/gswarm/accounts/{email}/discover-projects` | API Key / Session | Discover GCP projects |
+| GET | `/api/gswarm/models` | API Key / Session | Available models (filterable) |
+| GET | `/api/gswarm/metrics` | API Key / Session | Usage metrics |
+| GET/POST | `/api/gswarm/config` | API Key | Read/update GSwarm config |
+| GET | `/api/gswarm/status/stream` | API Key | SSE real-time status |
+| GET | `/api/gswarm/metrics/export` | API Key / Session | Export metrics ZIP/CSV/JSON |
+| GET | `/api/gswarm/metrics/trends` | API Key / Session | Historical trend analysis |
+| GET | `/api/dashboard/stats` | Session | Dashboard overview stats |
+| GET | `/api/dashboard/metrics` | Session | Dashboard chart data |
+| GET | `/api/dashboard/errors` | Session | Error log |
+| POST | `/api/admin/login` | — | Admin login |
+| POST | `/api/admin/logout` | Session | Admin logout |
+| GET | `/api/admin/session` | Session | Session validation |
+| GET | `/api/auth/google` | — | OAuth redirect |
+| GET | `/api/auth/callback` | — | OAuth callback |
+| POST | `/api/auth/login` | — | Auth login |
+| POST | `/api/auth/logout` | Session | Auth logout |
+| GET | `/api/api-keys` | Session | List API keys |
+| POST | `/api/api-keys` | Session | Create API key |
+| DELETE | `/api/api-keys/{id}` | Session | Delete API key |
+| GET | `/api/accounts` | Session | List accounts (dashboard) |
+| POST | `/api/accounts/{id}/logout` | Session | Logout account |
+| GET | `/api/projects` | Session | List projects |
+| POST | `/api/projects/create` | Session | Create project |
+| POST | `/api/projects/test` | Session | Test all projects |
+| POST | `/api/projects/{id}/enable` | Session | Enable project |
+| POST | `/api/projects/{id}/test` | Session | Test single project |
+| POST | `/api/projects/{id}/toggle` | Session | Toggle project |
+| POST | `/api/bench` | Session | Run benchmark |
+| POST | `/api/probe` | Session | Probe endpoint |
+| GET | `/api/refresh-tokens` | Session | Refresh OAuth tokens |
 
 ---
 
@@ -147,11 +197,11 @@ graph TD
 
 ### Project Status Tracking
 
-Each project tracks comprehensive health metrics:
+Each project tracks comprehensive health metrics (`lib/gswarm/types.ts`):
 
 ```typescript
 interface ProjectStatus {
-  id: string;
+  projectId: string;
   lastUsedAt: number;
   lastSuccessAt: number;
   lastErrorAt: number;
@@ -159,64 +209,33 @@ interface ProjectStatus {
   errorCount: number;
   consecutiveErrors: number;
   cooldownUntil: number;
-  lastErrorType?: "rate_limit" | "auth" | "server" | "quota_exhausted";
+  lastErrorType?: "rate_limit" | "auth" | "server" | "not_logged_in" | "quota_exhausted";
   quotaResetTime?: number;      // Parsed from 429 response
   quotaResetReason?: string;    // Human-readable (e.g., "21h10m20s")
 }
 ```
 
+### Health Score Formula
+
+Projects are ranked by a weighted composite score (`lib/gswarm/lru-selector.ts`):
+
+```
+score = 0.5 × successRate + 0.3 × recencyBonus + 0.2 × (1 - cooldownPenalty)
+```
+
+| Component | Weight | Range | Description |
+|-----------|--------|-------|-------------|
+| Success Rate | 0.5 | 0-1 | `successCount / (successCount + errorCount)` |
+| Recency Bonus | 0.3 | 0-1 | Linear decay over 5-minute window |
+| Cooldown Penalty | 0.2 | 0-1 | 1 if in cooldown, 0 otherwise |
+
 **Selection algorithm:**
 
-1. Filter out projects in cooldown (`cooldownUntil > now`)
-2. Score remaining projects: `successCount / (errorCount + 1)`
-3. Pick least-recently-used project with highest success rate
-4. Fallback to next project on error (automatic retry)
-
----
-
-## Rate Limits & Quotas
-
-### Google Cloud Companion API Quotas
-
-**Per-minute quotas:**
-
-| API Endpoint | Limit |
-|--------------|-------|
-| Code Repository Index Management | 600 req/min |
-| Anarres API (per user) | 100 req/min |
-| API Requests (per user) | 120 req/min |
-| Data Insights API (per user) | 120 req/min |
-| Generate Looker Query (per user) | 100 req/min |
-
-**Per-day quotas (per user):**
-
-| API Endpoint | Limit | GSwarm Capacity (3 acc × 12 proj) |
-|--------------|-------|----------------------------------|
-| Chat API | 1,500 req/day | ~54,000 req/day |
-| Code API | 4,500 req/day | ~162,000 req/day |
-| Duet Complete Code API | 4,500 req/day | ~162,000 req/day |
-| Duet Generate Code API | 4,500 req/day | ~162,000 req/day |
-| Duet Task API | 720 req/day | ~25,920 req/day |
-| Duet Text API | 180 req/day | ~6,480 req/day |
-
-**System limits:**
-
-- **Code Repository Index:** 1 per project (multi-repo orgs need separate projects)
-
-### Tested Throughput (December 2025)
-
-Config: **3 Gmail accounts × 12 projects = 36 rotation slots**
-
-| Model | RPM | RPD | Per Account |
-|-------|-----|-----|-------------|
-| Gemini 2.5 Flash | ~250 | ~5,000 | ~1,680 |
-| Gemini 2.5 Pro | ~130 | ~211 | ~70-80 |
-| Gemini 3 Flash Preview | ~300 | ~5,880 | ~1,960 |
-| Gemini 3 Pro Preview* | — | ~210 | ~70-80 |
-
-*Requires Google AI Pro subscription ($20/month)
-
-**Note:** Each model has separate quotas per account per day — exhausting Flash quota doesn't affect Pro quota.
+1. Evaluate all enabled projects across all accounts
+2. Calculate composite health score for each
+3. Sort by health score (highest first)
+4. Return best project with its account's OAuth token
+5. Fallback to next project on error (automatic retry)
 
 ---
 
@@ -224,18 +243,24 @@ Config: **3 Gmail accounts × 12 projects = 36 rotation slots**
 
 ### Cooldown Configuration
 
-GSwarm applies intelligent cooldowns based on error type:
+GSwarm applies exponential backoff cooldowns based on error type (`lib/gswarm/storage/projects.ts`):
 
-| Error Type | Cooldown | Strategy |
-|------------|----------|----------|
-| Rate Limit (429) | Until quota reset | Parse reset time from response, fallback to 120s |
-| Auth (401/403) | 300s (5 min) | Token refresh needed |
-| Server (5xx) | 60s (1 min) | Transient error |
-| Minimum Cooldown | 120s (2 min) | Safety floor |
+| Parameter | Value |
+|-----------|-------|
+| Initial cooldown | 60s (1 min) |
+| Max cooldown | 3,600s (1 hour) |
+| Backoff multiplier | 2x |
+| Consecutive error threshold | 3 (before backoff kicks in) |
+
+**Rate limit (429):** Parses quota reset time from response body (e.g., "21h10m20s"), falls back to 60s initial cooldown.
+
+**Auth errors (401/403):** Default 300s cooldown for token refresh.
+
+**Server errors (5xx):** Standard exponential backoff from 60s.
 
 ### Health States
 
-GSwarm tracks system-wide health across 5 states:
+GSwarm tracks system-wide health (`lib/gswarm/types.ts`):
 
 ```typescript
 type GSwarmStatus =
@@ -247,140 +272,58 @@ type GSwarmStatus =
   | "quota_exhausted";    // Daily quota exhausted
 ```
 
-**State transitions:**
-
-- **connected → degraded-routed:** Some projects rate-limited, but request succeeded on fallback
-- **connected → degraded-capacity:** Multiple projects unavailable, capacity reduced
-- **degraded-* → frozen:** Account-wide cooldown triggered (e.g., billing disabled)
-- **frozen → disconnected:** All accounts exhausted or frozen
-
-### Error Handler Namespace
-
-Redis pubsub channel: `gswarm:error`
-
-```typescript
-await redis.publish("gswarm:error", {
-  type: "rate_limit" | "auth" | "server" | "quota_exhausted",
-  projectId: string,
-  accountEmail: string,
-  message: string,
-  cooldownUntil: number,
-  quotaResetTime?: number,
-});
-```
-
 ---
 
 ## Monitoring
 
 ### Redis Keys
 
-GSwarm stores project status and metrics in Redis for real-time monitoring:
+GSwarm uses Redis for all persistent storage:
 
 | Key Pattern | Purpose |
 |-------------|---------|
-| `gswarm:status` | Global health state (connected/degraded/frozen/disconnected) |
-| `gswarm:project:{id}:status` | Per-project status (lastUsedAt, successCount, cooldownUntil) |
-| `gswarm:account:{email}:status` | Per-account health (frozenUntil, failedProjects) |
-| `gswarm:cache:{hash}` | AI response cache (TTL varies by call source) |
-| `gswarm:news` | News cache (TTL: 5 min) |
-| `gswarm:seen_ids` | Seen news IDs (deduplication) |
-| `gswarm:error` | Error pubsub channel (broadcasts rate limits, auth failures) |
+| `gswarm:api-keys` | API key store (name, hash, IP allowlist) |
+| `gswarm:rate-limit:{keyHash}:{minute}` | Per-key per-minute rate limit counters |
+| `project-status:{projectId}` | Per-project health (successCount, cooldownUntil, errors) |
+| `oauth-tokens:{email}` | OAuth tokens per Google account (access + refresh) |
+| `metrics:{YYYY-MM-DD}` | Daily request metrics with 30-day TTL |
 
-### Metrics Interface
+### Metrics Types
+
+Request-level and aggregated metrics (`lib/gswarm/types.ts`):
 
 ```typescript
-interface GSwarmMetrics {
-  totalRequests: number;
-  successfulRequests: number;
-  failedRequests: number;
-  rateLimitedRequests: number;
-  authFailedRequests: number;
-  serverErrorRequests: number;
-  cacheHits: number;
-  cacheMisses: number;
-  averageLatencyMs: number;
-  projectRotations: number;
+interface RequestMetric {
+  id: string;
+  timestamp: string;
+  endpoint: string;
+  method: string;
+  account_id: string;
+  project_id: string;
+  duration_ms: number;
+  status: "success" | "error";
+  status_code?: number;
+  error_type?: string;
+  tokens_used?: number;
+  model?: string;
+}
+
+interface AggregatedMetrics {
+  period_start: string;
+  period_end: string;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  avg_duration_ms: number;
+  total_duration_ms: number;
+  by_endpoint: Record<string, EndpointStats>;
+  by_account: Record<string, AccountStats>;
+  by_project: Record<string, ProjectStats>;
+  error_breakdown: Record<string, number>;
 }
 ```
 
-**Dashboard endpoint:** `/api/gswarm/metrics` (authenticated)
-
----
-
-## Setup
-
-### 1. Install & Configure
-
-```bash
-git clone https://github.com/bosmadev/gswarm.git
-cd gswarm
-pnpm install
-```
-
-### 2. Environment
-
-Create a `.env` file (encrypted via [dotenvx](https://dotenvx.com)):
-
-```bash
-# Admin credentials (fallback if Redis is unavailable)
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your-secure-password
-
-# API Keys (format: name:key:ips — use * for all IPs)
-API_KEYS=myapp:sk-gswarm-xxxxx:*
-
-# Application
-GLOBAL_PORT=3001
-GLOBAL_URL=http://localhost
-
-# Session Secret (generate: openssl rand -base64 32)
-SESSION_SECRET=your-session-secret
-
-# Redis — any Redis-compatible service works
-# Upstash (free): https://upstash.com/pricing/redis
-# Self-hosted: redis://localhost:6379
-REDIS_URL=redis://localhost:6379
-```
-
-Encrypt with `pnpm env:encrypt` before committing.
-
-### 3. Run
-
-```bash
-pnpm dev          # Development (Turbopack)
-pnpm launch       # Interactive TUI launcher
-pnpm build        # Production build
-```
-
-### 4. Add Accounts
-
-Open the dashboard at `http://localhost:3001/dashboard`, log in, and click **Add Account** to connect Gmail accounts via OAuth. Each account gives you 12 GCP projects for rotation.
-
----
-
-## Supported Models
-
-| Model | ID |
-|-------|-----|
-| Gemini 2.5 Flash | `gemini-2.5-flash` |
-| Gemini 2.5 Pro | `gemini-2.5-pro` |
-| Gemini 3 Flash Preview | `gemini-3-flash-preview` |
-| Gemini 3 Pro Preview | `gemini-3-pro-preview` |
-| Gemini 2.0 Flash | `gemini-2.0-flash` |
-
----
-
-## Stack
-
-| Component | Technology |
-|-----------|-----------|
-| Framework | Next.js 16 (App Router) |
-| Language | TypeScript 5.9 |
-| Storage | Redis (Upstash / self-hosted) |
-| Auth | Google OAuth 2.0 |
-| Linting | Biome |
-| Testing | Vitest + Pytest |
+**Dashboard endpoint:** `GET /api/gswarm/metrics` (authenticated)
 
 ---
 

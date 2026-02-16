@@ -1047,7 +1047,7 @@ async function interactiveDashboard(): Promise<void> {
     if (status.accounts.length === 0) {
       consoleLog(
         PREFIX.GSWARM,
-        `  ${DIM}[None] - Add account via dashboard: ${process.env.GLOBAL_URL || "http://localhost:3001"}${RESET}`,
+        `  ${DIM}[None] - Add account via dashboard: ${process.env.GLOBAL_URL || "http://localhost:3000"}${RESET}`,
       );
     } else {
       for (const account of status.accounts) {
@@ -1080,7 +1080,7 @@ async function interactiveDashboard(): Promise<void> {
     consoleLog(PREFIX.GSWARM, "");
     consoleLog(
       PREFIX.GSWARM,
-      `  ${DIM}Add accounts via dashboard: ${process.env.GLOBAL_URL || "http://localhost:3001"}${RESET}`,
+      `  ${DIM}Add accounts via dashboard: ${process.env.GLOBAL_URL || "http://localhost:3000"}${RESET}`,
     );
     consoleLog(PREFIX.GSWARM, "");
     consoleLog(PREFIX.GSWARM, "  [0] Exit");

@@ -2105,9 +2105,10 @@ function postbuild(): void {
 async function main(): Promise<void> {
   const command = args[0]?.toLowerCase();
 
-  // Handle daemon commands
-  if (command) {
-    switch (command) {
+  // Handle daemon commands and flags
+  const normalizedCommand = command?.replace(/^--/, "");
+  if (normalizedCommand) {
+    switch (normalizedCommand) {
       case "start":
         await daemonStart();
         return;
@@ -2132,6 +2133,9 @@ async function main(): Promise<void> {
         return;
       case "postbuild":
         postbuild();
+        return;
+      case "debug":
+        await startDevServerDebug();
         return;
     }
   }
