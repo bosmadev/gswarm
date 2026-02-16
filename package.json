@@ -12,8 +12,8 @@
   "type": "module",
   "scripts": {
     "############ SERVER ############": "",
-    "dev": "dotenvx run -- next dev --turbopack",
-    "start": "dotenvx run -- next start",
+    "dev": "dotenvx run -- node --input-type=commonjs -e \"process.env.PORT=process.env.GLOBAL_PORT||'3000';require('child_process').execSync('next dev --turbopack',{stdio:'inherit',shell:true})\"",
+    "start": "dotenvx run -- node --input-type=commonjs -e \"process.env.PORT=process.env.GLOBAL_PORT||'3000';require('child_process').execSync('next start',{stdio:'inherit',shell:true})\"",
     "launch": "node --experimental-transform-types scripts/launch.ts",
     "launch:debug": "DEBUG=true node --experimental-transform-types scripts/launch.ts",
     "launch:tunnel": "cloudflared tunnel run $npm_package_name",
