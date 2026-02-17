@@ -3,6 +3,14 @@
 
 ---
 
+## [![v1.0.4](https://img.shields.io/badge/v1.0.4-2026--02--17-333333.svg)](https://github.com/bosmadev/gswarm/commit/2d9e72ac65d9e0328ee92b81232cefb85b655ea0) | Build 10
+
+fix(ci): inline Python one-liner to fix YAML parse error
+
+
+
+---
+
 ## [![v1.0.3](https://img.shields.io/badge/v1.0.3-2026--02--10-333333.svg)](https://github.com/bosmadev/gswarm-api/commit/4eb4a647b4f2e0cd87ec7cd30c5f40e1ca78b38c) | Build 7
 
 fix(ci): anchor changelog.ts dedup regex to ## headers
