@@ -10,6 +10,7 @@
 #
 # Required Secrets:
 #   - CLAUDE_CODE_OAUTH_TOKEN: OAuth token from `claude auth login` + `/token sync`
+#   - ADMIN_TOKEN: GitHub PAT with repo scope (for cloning bosmadev/claude config)
 #   - GITHUB_TOKEN: Auto-provided by GitHub Actions
 #
 # Documentation: See ~/.claude/CLAUDE.md § GitHub Actions Workflow Template
@@ -103,11 +104,11 @@ jobs:
   claude:
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude review') && github.event.comment.author_association != 'NONE') ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude review') && github.event.comment.author_association != 'NONE') ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude review') && github.event.review.author_association != 'NONE') ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude review') && github.event.comment.author_association == 'OWNER') ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude review') && github.event.comment.author_association == 'OWNER') ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude review') && github.event.review.author_association == 'OWNER') ||
       (github.event_name == 'issues' && github.event.action == 'assigned' && github.event.assignee.login == 'claude[bot]') ||
-      (github.event_name == 'issues' && github.event.action == 'opened' && contains(github.event.issue.body, '@claude review') && github.event.issue.author_association != 'NONE') ||
+      (github.event_name == 'issues' && github.event.action == 'opened' && contains(github.event.issue.body, '@claude review') && github.event.issue.author_association == 'OWNER') ||
       (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'claude') ||
       (github.event_name == 'pull_request' && github.event.action == 'opened' && contains(github.event.pull_request.labels.*.name, 'claude'))
     runs-on: ubuntu-latest
@@ -116,24 +117,35 @@ jobs:
       cancel-in-progress: true  # New push invalidates old review
     timeout-minutes: ${{ github.event.inputs.timeout && github.event.inputs.timeout <= 60 && github.event.inputs.timeout || 30 }}
     permissions:
-      contents: read  # Read code only, no write access
+      id-token: write  # Required for Claude OAuth OIDC token exchange
+      contents: read   # Read code only, no write access
+      issues: write
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 50  # Limit to 50 commits for performance, sufficient for most reviews
 
-      - name: Setup Node.js with caching
+      - name: Clone Claude config
+        run: |
+          # Clone central config repo to ~/.claude — gives @claude the same
+          # CLAUDE.md, agent configs, and scripts as local CLI sessions.
+          # Runner is ephemeral — ~/.claude is destroyed after job finishes.
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.ADMIN_TOKEN }}@github.com/bosmadev/claude.git \
+            ~/.claude 2>/dev/null || echo "::warning::Could not clone bosmadev/claude config"
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # No cache — claude job only uses npx for MCP servers, no project deps installed
 
       - name: Validate Required Packages
         run: |
-          # Verify packages exist in npm registry before installation
           npm view @modelcontextprotocol/server-sequential-thinking version || exit 1
-          npm view @context7/mcp-server version || exit 1
+          npm view @upstash/context7-mcp version || exit 1
 
       - name: Create MCP Configuration
         run: |
@@ -146,13 +158,13 @@ jobs:
               },
               "context7": {
                 "command": "npx",
-                "args": ["-y", "@context7/mcp-server"]
+                "args": ["-y", "@upstash/context7-mcp"]
               }
             }
           }
           EOF
-          # NOTE: Only sequential-thinking and context7 included for CI safety
-          # Serena/Playwriter excluded - risk of infinite loops burning minutes
+          # NOTE: Only context7 included for CI safety
+          # Playwriter excluded - risk of infinite loops burning minutes
 
       - name: Validate Claude Token Secret
         run: |
@@ -174,7 +186,7 @@ jobs:
           branch_prefix: ""
           branch_name_template: "{{entityType}}-{{entityNumber}}-{{description}}"
           allowed_bots: "dependabot[bot],renovate[bot]"
-          track_progress: true
+          track_progress: ${{ github.event_name == 'pull_request' && contains(fromJSON('["opened","synchronize","ready_for_review","reopened"]'), github.event.action) }}
           use_sticky_comment: true
           include_fix_links: true
           use_commit_signing: true
@@ -241,7 +253,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 50  # Enough history to find all new commits since last bot commit
+          token: ${{ secrets.ADMIN_TOKEN || github.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -418,3 +431,47 @@ jobs:
 
             // Clean up temp file
             fs.unlinkSync(notesPath);
+
+  # ============================================
+  # Job 3: Reset Dev Branches to Latest Main
+  # ============================================
+  # After changelog commit and release, force-reset dev branches to include all
+  # auto-generated commits (CHANGELOG, version bump). This replaces the standalone
+  # reset-dev.yml workflow to eliminate the race condition where reset-dev ran
+  # BEFORE the changelog commit was pushed, leaving dev perpetually behind main.
+  reset-dev:
+    name: Reset Dev Branches
+    needs: [changelog, create-release]
+    if: |
+      always() &&
+      github.event_name == 'push' &&
+      needs.changelog.result != 'failure' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.ADMIN_TOKEN || github.token }}
+
+      - name: Reset dev branches to latest main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Fetch latest main (includes changelog commit from earlier job)
+          git fetch origin main
+          LATEST=$(git rev-parse FETCH_HEAD)
+          echo "Latest main: $(git log -1 --oneline $LATEST)"
+
+          REPO=$(basename "$GITHUB_REPOSITORY")
+          for BRANCH in "${REPO}-dev" "${REPO}-night-dev"; do
+            if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+              git push --force origin "$LATEST:refs/heads/$BRANCH"
+              echo "✓ Reset $BRANCH to $(git rev-parse --short $LATEST)"
+            else
+              echo "⊘ Branch $BRANCH does not exist, skipping"
+            fi
+          done
