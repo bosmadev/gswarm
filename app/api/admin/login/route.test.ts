@@ -14,7 +14,10 @@ vi.mock("@/lib/admin-session", () => ({
 
 vi.mock("@/lib/rate-limit", () => ({
   checkAuthRateLimit: vi.fn().mockReturnValue(null),
-  getClientIp: vi.fn().mockReturnValue("127.0.0.1"),
+}));
+
+vi.mock("@/app/api/gswarm/_shared/auth", () => ({
+  extractClientIp: vi.fn().mockReturnValue("127.0.0.1"),
 }));
 
 vi.mock("@/lib/api-validation", () => ({
@@ -27,10 +30,10 @@ vi.mock("@/lib/console", () => ({
   consoleError: vi.fn(),
 }));
 
-import { checkAuthRateLimit } from "@/lib/rate-limit";
+import { NextResponse } from "next/server";
 import { createSession, validateCredentials } from "@/lib/admin-session";
 import { parseAndValidate } from "@/lib/api-validation";
-import { NextResponse } from "next/server";
+import { checkAuthRateLimit } from "@/lib/rate-limit";
 import { POST } from "./route";
 
 function makeRequest(body?: Record<string, unknown>): Request {
@@ -67,7 +70,10 @@ describe("POST /api/admin/login", () => {
       success: true,
       data: { username: "admin", password: "correct" },
     } as Awaited<ReturnType<typeof parseAndValidate>>);
-    vi.mocked(validateCredentials).mockResolvedValue({ valid: true, user: "admin" });
+    vi.mocked(validateCredentials).mockResolvedValue({
+      valid: true,
+      user: "admin",
+    });
     vi.mocked(createSession).mockResolvedValue({
       id: "session-abc123",
       user: "admin",
