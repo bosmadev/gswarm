@@ -3,6 +3,16 @@
 
 ---
 
+## [![v1.0.6](https://img.shields.io/badge/v1.0.6-2026--02--21-333333.svg)](https://github.com/bosmadev/gswarm/commit/a96547cf1aad7830c54cbb85ec73b6922e0fe8c1) | Build 12
+
+fix(ci): add OWNER gating to labeled and assigned triggers
+
+- [x] Prevent non-owners from triggering reviews via claude label
+- [x] Prevent non-owners from triggering reviews via issue assignment
+
+
+---
+
 ## [![v1.0.5](https://img.shields.io/badge/v1.0.5-2026--02--21-333333.svg)](https://github.com/bosmadev/gswarm/commit/2b115797b88523d94569776dd1b76214ffad9773) | Build 11
 
 config: sync workflow files from source-of-truth
