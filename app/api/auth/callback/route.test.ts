@@ -15,11 +15,14 @@ vi.mock("@/lib/gswarm/storage/tokens", () => ({
 }));
 
 vi.mock("@/lib/gswarm/url-builder", () => ({
-  getCallbackUrl: vi.fn().mockReturnValue("https://example.com/api/auth/callback"),
+  getCallbackUrl: vi
+    .fn()
+    .mockReturnValue("https://example.com/api/auth/callback"),
 }));
 
 vi.mock("@/lib/utils", () => ({
-  escapeHtml: (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
+  escapeHtml: (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
 }));
 
 vi.mock("@/lib/console", () => ({
@@ -28,7 +31,10 @@ vi.mock("@/lib/console", () => ({
   consoleError: vi.fn(),
 }));
 
-import { exchangeCodeForTokens, getTokenEmailFromData } from "@/lib/gswarm/oauth";
+import {
+  exchangeCodeForTokens,
+  getTokenEmailFromData,
+} from "@/lib/gswarm/oauth";
 import { GET } from "./route";
 
 function makeRequest(
@@ -42,7 +48,8 @@ function makeRequest(
   return {
     url: url.toString(),
     cookies: {
-      get: (key: string) => (cookies[key] ? { value: cookies[key] } : undefined),
+      get: (key: string) =>
+        cookies[key] ? { value: cookies[key] } : undefined,
     },
     headers: { get: () => null },
   } as unknown as import("next/server").NextRequest;

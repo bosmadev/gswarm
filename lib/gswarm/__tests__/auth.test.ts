@@ -28,8 +28,8 @@ vi.mock("node:fs", () => ({
   renameSync: vi.fn(),
 }));
 
-import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 import fsPromises from "node:fs/promises";
+import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 
 // Helper to build a mock NextRequest
 function makeRequest(
@@ -41,7 +41,8 @@ function makeRequest(
       get: (key: string) => headers[key.toLowerCase()] ?? null,
     },
     cookies: {
-      get: (key: string) => (cookies[key] ? { value: cookies[key] } : undefined),
+      get: (key: string) =>
+        cookies[key] ? { value: cookies[key] } : undefined,
     },
   } as unknown as import("next/server").NextRequest;
 }
@@ -52,7 +53,9 @@ describe("authenticateRequest", () => {
   });
 
   it("returns success: false with missingApiKey when no authorization header", async () => {
-    const { authenticateRequest } = await import("@/app/api/gswarm/_shared/auth");
+    const { authenticateRequest } = await import(
+      "@/app/api/gswarm/_shared/auth"
+    );
     const req = makeRequest();
     const result = await authenticateRequest(req, "/api/gswarm/generate");
     expect(result.success).toBe(false);
@@ -67,7 +70,9 @@ describe("authenticateRequest", () => {
       rate_limit_reset: 0,
     } as Awaited<ReturnType<typeof validateApiKey>>);
 
-    const { authenticateRequest } = await import("@/app/api/gswarm/_shared/auth");
+    const { authenticateRequest } = await import(
+      "@/app/api/gswarm/_shared/auth"
+    );
     const req = makeRequest({ authorization: "Bearer valid-key-123" });
     const result = await authenticateRequest(req, "/api/gswarm/generate");
 
@@ -84,7 +89,9 @@ describe("authenticateRequest", () => {
       rate_limit_reset: 1700000000,
     } as Awaited<ReturnType<typeof validateApiKey>>);
 
-    const { authenticateRequest } = await import("@/app/api/gswarm/_shared/auth");
+    const { authenticateRequest } = await import(
+      "@/app/api/gswarm/_shared/auth"
+    );
     const req = makeRequest({ authorization: "Bearer some-key" });
     const result = await authenticateRequest(req, "/api/gswarm/generate");
 
@@ -98,7 +105,9 @@ describe("authenticateRequest", () => {
       error: "Invalid API key",
     } as Awaited<ReturnType<typeof validateApiKey>>);
 
-    const { authenticateRequest } = await import("@/app/api/gswarm/_shared/auth");
+    const { authenticateRequest } = await import(
+      "@/app/api/gswarm/_shared/auth"
+    );
     const req = makeRequest({ authorization: "Bearer bad-key" });
     const result = await authenticateRequest(req, "/api/gswarm/generate");
 
@@ -112,7 +121,9 @@ describe("authenticateRequest", () => {
       name: "raw-key",
     } as Awaited<ReturnType<typeof validateApiKey>>);
 
-    const { authenticateRequest } = await import("@/app/api/gswarm/_shared/auth");
+    const { authenticateRequest } = await import(
+      "@/app/api/gswarm/_shared/auth"
+    );
     const req = makeRequest({ authorization: "raw-api-key-value" });
     const result = await authenticateRequest(req, "/api/gswarm/generate");
 

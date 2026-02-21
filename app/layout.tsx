@@ -68,9 +68,7 @@ export default function RootLayout({
                 <ConfirmationProvider>
                   <CommandPaletteProvider>
                     <ReactGrabProvider>
-                      <main>
-                        {children}
-                      </main>
+                      <main>{children}</main>
                       <Toaster />
                     </ReactGrabProvider>
                   </CommandPaletteProvider>

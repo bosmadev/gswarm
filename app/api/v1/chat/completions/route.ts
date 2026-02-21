@@ -139,6 +139,16 @@ function generateCompletionId(): string {
 }
 
 /**
+ * Strips role-prefix injection patterns from user content.
+ * Prevents users from injecting "System:", "Assistant:", "User:" prefixes
+ * to manipulate the conversation structure.
+ */
+function stripRolePrefixes(content: string): string {
+  // Remove leading role-prefix patterns (case-insensitive, with optional whitespace)
+  return content.replace(/^\s*(?:system|assistant|user)\s*:\s*/i, "");
+}
+
+/**
  * Converts messages array to a single prompt string.
  * Exported for unit testing.
  */
@@ -156,7 +166,9 @@ export function messagesToPrompt(messages: ChatMessage[]): {
         ? `${systemPrompt}\n${message.content}`
         : message.content;
     } else if (message.role === "user") {
-      conversationParts.push(`User: ${message.content}`);
+      // Strip role-prefix injection from user content
+      const safeContent = stripRolePrefixes(message.content);
+      conversationParts.push(`User: ${safeContent}`);
     } else if (message.role === "assistant") {
       conversationParts.push(`Assistant: ${message.content}`);
     }
@@ -171,7 +183,7 @@ export function messagesToPrompt(messages: ChatMessage[]): {
     }
   }
   const prompt = lastUserMessage
-    ? lastUserMessage.content
+    ? stripRolePrefixes(lastUserMessage.content)
     : conversationParts.join("\n\n");
 
   return { prompt, systemPrompt };

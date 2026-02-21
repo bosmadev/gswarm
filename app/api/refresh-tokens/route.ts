@@ -7,8 +7,8 @@
  */
 
 import { type NextRequest, NextResponse } from "next/server";
-import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
 import {
   getRefreshServiceStatus,
   refreshTokenByEmail,

@@ -104,10 +104,17 @@ export default function LoginPage() {
               role="img"
               aria-label="GSwarm logo"
             >
-              <span className="text-orange font-bold text-2xl" aria-hidden="true">G</span>
+              <span
+                className="text-orange font-bold text-2xl"
+                aria-hidden="true"
+              >
+                G
+              </span>
             </div>
           </div>
-          <CardTitle id="login-heading" className="text-2xl">GSwarm Dashboard</CardTitle>
+          <CardTitle id="login-heading" className="text-2xl">
+            GSwarm Dashboard
+          </CardTitle>
           <CardDescription>
             Sign in to access the admin dashboard
           </CardDescription>

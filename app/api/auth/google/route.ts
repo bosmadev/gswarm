@@ -9,8 +9,8 @@
  */
 
 import { type NextRequest, NextResponse } from "next/server";
-import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
 import { validateAdminSession } from "@/lib/admin-session";
+import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
 import { generateAuthUrl } from "@/lib/gswarm/oauth";
 import { getCallbackUrl } from "@/lib/gswarm/url-builder";
 import { escapeHtml } from "@/lib/utils";
@@ -73,7 +73,8 @@ export async function GET(request: NextRequest) {
     consoleError(PREFIX.API, "Error initiating OAuth flow:", error);
 
     // Return generic error page — do not expose internal error.message
-    const safeError = error instanceof Error ? escapeHtml(error.message) : "Unknown error";
+    const safeError =
+      error instanceof Error ? escapeHtml(error.message) : "Unknown error";
     consoleError(PREFIX.API, "OAuth initiation error detail:", safeError);
 
     return new NextResponse(

@@ -26,8 +26,16 @@ const OAUTH_STATE_COOKIE = "oauth_state";
 function popupResponse(success: boolean, message: string): NextResponse {
   const safeMessage = escapeHtml(message);
   const safeTitle = success ? "Auth Successful" : "Auth Error";
-  const safeHeading = success ? "&#x2713; Account Added" : "&#x2717; Authentication Failed";
-  const payload = JSON.stringify({ success, message });
+  const safeHeading = success
+    ? "&#x2713; Account Added"
+    : "&#x2717; Authentication Failed";
+  // Escape </script> sequences in the JSON payload to prevent inline script injection.
+  // JSON.stringify does not escape these by default, which allows a crafted `message`
+  // containing `</script>` to break out of the <script> block (XSS).
+  const payload = JSON.stringify({ success, message }).replace(
+    /<\/script>/gi,
+    "<\\/script>",
+  );
   return new NextResponse(
     `<!DOCTYPE html>
 <html>
@@ -66,18 +74,24 @@ export async function GET(request: NextRequest) {
     const storedState = request.cookies.get(OAUTH_STATE_COOKIE)?.value;
     if (!storedState || !stateParam || storedState !== stateParam) {
       consoleError(PREFIX.API, "OAuth CSRF state mismatch or missing state");
-      return popupResponse(false, "Invalid or missing state parameter");
+      const res = popupResponse(false, "Invalid or missing state parameter");
+      res.cookies.set(OAUTH_STATE_COOKIE, "", { maxAge: 0, path: "/" });
+      return res;
     }
 
     // Handle OAuth errors from Google
     if (error) {
       consoleError(PREFIX.API, "OAuth error from Google:", error);
-      return popupResponse(false, `Google returned error: ${error}`);
+      const res = popupResponse(false, `Google returned error: ${error}`);
+      res.cookies.set(OAUTH_STATE_COOKIE, "", { maxAge: 0, path: "/" });
+      return res;
     }
 
     // Validate code parameter
     if (!code) {
-      return popupResponse(false, "Missing authorization code");
+      const res = popupResponse(false, "Missing authorization code");
+      res.cookies.set(OAUTH_STATE_COOKIE, "", { maxAge: 0, path: "/" });
+      return res;
     }
 
     // Build redirect URI from centralized url-builder (must match /api/auth/google)
@@ -87,14 +101,18 @@ export async function GET(request: NextRequest) {
     const tokens = await exchangeCodeForTokens(code, redirectUri);
     if (!tokens) {
       consoleError(PREFIX.API, "Failed to exchange code for tokens");
-      return popupResponse(false, "Token exchange failed");
+      const res = popupResponse(false, "Token exchange failed");
+      res.cookies.set(OAUTH_STATE_COOKIE, "", { maxAge: 0, path: "/" });
+      return res;
     }
 
     // Get email from token data
     const email = await getTokenEmailFromData(tokens);
     if (!email) {
       consoleError(PREFIX.API, "Could not extract email from token");
-      return popupResponse(false, "Could not determine account email");
+      const res = popupResponse(false, "Could not determine account email");
+      res.cookies.set(OAUTH_STATE_COOKIE, "", { maxAge: 0, path: "/" });
+      return res;
     }
 
     // Save token to storage
@@ -102,12 +120,14 @@ export async function GET(request: NextRequest) {
 
     consoleLog(PREFIX.SUCCESS, `OAuth account added: ${email}`);
 
+    // Clear the CSRF state cookie after use (success or failure)
     const response = popupResponse(true, `Account ${email} added successfully`);
-    // Clear the CSRF state cookie after successful use
     response.cookies.set(OAUTH_STATE_COOKIE, "", { maxAge: 0, path: "/" });
     return response;
   } catch (error) {
     consoleError(PREFIX.API, "Error processing OAuth callback:", error);
-    return popupResponse(false, "Authentication failed");
+    const res = popupResponse(false, "Authentication failed");
+    res.cookies.set(OAUTH_STATE_COOKIE, "", { maxAge: 0, path: "/" });
+    return res;
   }
 }

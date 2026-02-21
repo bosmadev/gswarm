@@ -450,7 +450,10 @@ export async function getAllGcpProjects(
   // Coalesce concurrent callers: if a fetch is already in-flight, all
   // callers that missed the cache share that single Promise.
   if (fetchInFlight) {
-    consoleDebug(PREFIX.DEBUG, "GCP project fetch already in-flight, coalescing");
+    consoleDebug(
+      PREFIX.DEBUG,
+      "GCP project fetch already in-flight, coalescing",
+    );
     return fetchInFlight;
   }
 
@@ -490,7 +493,8 @@ export async function getAllGcpProjects(
 
       // Deduplicate projects across tokens, tracking which token discovered each
       const seenProjectIds = new Set<string>();
-      const projectTokenPairs: { project: GcpProject; token: StoredToken }[] = [];
+      const projectTokenPairs: { project: GcpProject; token: StoredToken }[] =
+        [];
 
       tokenResults.forEach((result, i) => {
         const token = tokens[i];

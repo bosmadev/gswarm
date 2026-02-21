@@ -122,7 +122,8 @@ function messagesToPrompt(messages: ChatMessage[]): {
 
   // The last user message is the main prompt
   const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
-  const lastUserMessage = lastUserIndex >= 0 ? messages[lastUserIndex] : undefined;
+  const lastUserMessage =
+    lastUserIndex >= 0 ? messages[lastUserIndex] : undefined;
   const prompt = lastUserMessage
     ? stripRolePrefixes(lastUserMessage.content)
     : conversationParts.join("\n\n");

@@ -716,7 +716,10 @@ export function generateCliAuthUrl(
   };
 
   const url = buildAuthUrl(params);
-  consoleDebug(PREFIX.API, `Generated CLI auth URL for redirect: ${redirectUri}`);
+  consoleDebug(
+    PREFIX.API,
+    `Generated CLI auth URL for redirect: ${redirectUri}`,
+  );
   return { url: url.toString(), state: resolvedState };
 }
 

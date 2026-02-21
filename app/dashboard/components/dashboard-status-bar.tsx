@@ -366,8 +366,8 @@ function RefreshButton({
     <Tooltip
       content={
         <>
-          Auto-refresh in{" "}
-          <CountdownTimer totalSeconds={totalSeconds} />s. Click to refresh now.
+          Auto-refresh in <CountdownTimer totalSeconds={totalSeconds} />
+          s. Click to refresh now.
         </>
       }
     >
