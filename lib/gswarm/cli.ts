@@ -36,7 +36,7 @@ import {
   discoverProjects,
   exchangeCodeForTokens,
   extractValidationUrl,
-  generateAuthUrl,
+  generateCliAuthUrl,
   getTokenEmailFromData,
   isValidationRequired,
   refreshAccessToken,
@@ -298,8 +298,8 @@ async function authenticateAccount(
     const { server, port, codePromise } = await startOAuthServer();
     const redirectUri = `http://127.0.0.1:${port}/callback`;
 
-    // Generate auth URL with login_hint
-    const authUrl = generateAuthUrl(redirectUri);
+    // Generate auth URL with login_hint (CLI uses dynamic localhost redirect, bypasses web allowlist)
+    const { url: authUrl } = generateCliAuthUrl(redirectUri);
     const authUrlWithHint = new URL(authUrl);
     authUrlWithHint.searchParams.set("login_hint", email);
 

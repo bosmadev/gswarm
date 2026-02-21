@@ -1,7 +1,7 @@
 /**
  * @file lib/utils.ts
  * @description Utility functions for the application.
- * Includes class name merging utilities for Tailwind CSS.
+ * Includes class name merging utilities for Tailwind CSS and HTML escaping.
  *
  * @module lib/utils
  */
@@ -24,4 +24,28 @@ import { twMerge } from "tailwind-merge";
  */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/**
+ * Escapes special HTML characters to prevent XSS when interpolating
+ * user-controlled strings into HTML content.
+ *
+ * Escapes: `&`, `<`, `>`, `"`, `'`
+ *
+ * @example
+ * ```ts
+ * escapeHtml('<script>alert("xss")</script>')
+ * // Returns: '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;'
+ * ```
+ *
+ * @param str - Raw string to escape
+ * @returns HTML-safe escaped string
+ */
+export function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
 }

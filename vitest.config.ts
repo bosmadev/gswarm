@@ -15,5 +15,22 @@ export default defineConfig({
     globals: true, // Allows using describe/expect without imports
     environment: "happy-dom", // The simulation (no real browser needed)
     exclude: ["**/node_modules/**", "**/integration/**"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html"],
+      exclude: [
+        "node_modules/",
+        ".next/",
+        "scripts/",
+        "**/*.config.*",
+        "**/integration/**",
+      ],
+      thresholds: {
+        statements: 50,
+        branches: 40,
+        functions: 50,
+        lines: 50,
+      },
+    },
   },
 });

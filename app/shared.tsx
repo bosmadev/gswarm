@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 /**
  * Navigation item configuration
  */
-interface NavItem {
+export interface NavItem {
   id: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
@@ -43,9 +43,10 @@ interface NavItem {
 }
 
 /**
- * All navigation items including dashboard sub-items
+ * All navigation items including dashboard sub-items.
+ * Exported for use by command-palette-provider to avoid duplication.
  */
-const navItems: NavItem[] = [
+export const navItems: NavItem[] = [
   { id: "home", icon: Home, label: "Home", href: "/" },
   {
     id: "overview",

@@ -23,6 +23,16 @@ import {
 } from "../_shared/auth";
 import { streamingResponse } from "../_shared/streaming";
 
+// =============================================================================
+// INPUT LIMITS
+// =============================================================================
+
+/** Maximum number of messages allowed per request */
+const MAX_MESSAGES = 100;
+
+/** Maximum content length per message in characters */
+const MAX_CONTENT_LENGTH = 100_000;
+
 /**
  * Chat message structure
  */
@@ -76,6 +86,16 @@ function generateCompletionId(): string {
 }
 
 /**
+ * Strips role-prefix injection patterns from user content.
+ * Prevents users from injecting "System:", "Assistant:", "User:" prefixes
+ * to manipulate the conversation structure.
+ */
+function stripRolePrefixes(content: string): string {
+  // Remove leading role-prefix patterns (case-insensitive, with optional whitespace)
+  return content.replace(/^\s*(?:system|assistant|user)\s*:\s*/i, "");
+}
+
+/**
  * Converts messages array to a single prompt string
  */
 function messagesToPrompt(messages: ChatMessage[]): {
@@ -92,7 +112,9 @@ function messagesToPrompt(messages: ChatMessage[]): {
         ? `${systemPrompt}\n${message.content}`
         : message.content;
     } else if (message.role === "user") {
-      conversationParts.push(`User: ${message.content}`);
+      // Strip role-prefix injection from user content
+      const safeContent = stripRolePrefixes(message.content);
+      conversationParts.push(`User: ${safeContent}`);
     } else if (message.role === "assistant") {
       conversationParts.push(`Assistant: ${message.content}`);
     }
@@ -100,10 +122,10 @@ function messagesToPrompt(messages: ChatMessage[]): {
 
   // The last user message is the main prompt
   const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
-  const prompt =
-    lastUserIndex >= 0
-      ? messages[lastUserIndex].content
-      : conversationParts.join("\n\n");
+  const lastUserMessage = lastUserIndex >= 0 ? messages[lastUserIndex] : undefined;
+  const prompt = lastUserMessage
+    ? stripRolePrefixes(lastUserMessage.content)
+    : conversationParts.join("\n\n");
 
   return { prompt, systemPrompt };
 }
@@ -159,7 +181,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Validate message structure
+  // Enforce message count limit
+  if (messages.length > MAX_MESSAGES) {
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Validation failed",
+          message: `Too many messages: maximum is ${MAX_MESSAGES}`,
+        },
+        { status: 400 },
+      ),
+    );
+  }
+
+  // Validate message structure and content length
   for (const msg of messages) {
     if (!msg.role || !msg.content) {
       return addCorsHeaders(
@@ -178,6 +213,17 @@ export async function POST(request: NextRequest) {
           {
             error: "Validation failed",
             message: "Message role must be 'user', 'assistant', or 'system'",
+          },
+          { status: 400 },
+        ),
+      );
+    }
+    if (msg.content.length > MAX_CONTENT_LENGTH) {
+      return addCorsHeaders(
+        NextResponse.json(
+          {
+            error: "Validation failed",
+            message: `Message content exceeds maximum length of ${MAX_CONTENT_LENGTH} characters`,
           },
           { status: 400 },
         ),

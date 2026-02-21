@@ -307,27 +307,76 @@ function ProjectHealthDisplay({ healthy, failed }: ProjectHealthDisplayProps) {
   );
 }
 
+// ============================================================================
+// COUNTDOWN TIMER — isolated so parent doesn't re-render on every tick
+// ============================================================================
+
+interface CountdownTimerProps {
+  /** Total seconds between refreshes (resets when this prop changes) */
+  totalSeconds: number;
+  /** Called each time the countdown resets to 0 — parent triggers a refresh */
+  onExpire?: () => void;
+}
+
+/**
+ * Renders a live countdown and calls `onExpire` when it hits zero.
+ * Owns its own interval so the parent component never re-renders on tick.
+ */
+function CountdownTimer({ totalSeconds, onExpire }: CountdownTimerProps) {
+  const [remaining, setRemaining] = useState(totalSeconds);
+
+  // Reset when totalSeconds changes (e.g. after a manual refresh)
+  useEffect(() => {
+    setRemaining(totalSeconds);
+  }, [totalSeconds]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRemaining((prev) => {
+        if (prev <= 1) {
+          onExpire?.();
+          return totalSeconds;
+        }
+        return prev - 1;
+      });
+    }, COUNTDOWN_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [totalSeconds, onExpire]);
+
+  return <>{remaining}</>;
+}
+
+// ============================================================================
+// REFRESH BUTTON — receives a render-stable onRefresh ref
+// ============================================================================
+
 interface RefreshButtonProps {
-  countdown: number;
+  totalSeconds: number;
   isRefreshing: boolean;
   onRefresh: () => void;
 }
 
 function RefreshButton({
-  countdown,
+  totalSeconds,
   isRefreshing,
   onRefresh,
 }: RefreshButtonProps) {
   return (
-    <Tooltip content={`Auto-refresh in ${countdown}s. Click to refresh now.`}>
+    <Tooltip
+      content={
+        <>
+          Auto-refresh in{" "}
+          <CountdownTimer totalSeconds={totalSeconds} />s. Click to refresh now.
+        </>
+      }
+    >
       <Button
         variant="ghost"
         size="icon"
         onClick={onRefresh}
         disabled={isRefreshing}
-        aria-label={
-          isRefreshing ? "Refreshing..." : `Refresh (auto in ${countdown}s)`
-        }
+        aria-label={isRefreshing ? "Refreshing..." : "Refresh dashboard"}
       >
         <RefreshCw
           className={cn("h-4 w-4", isRefreshing && "animate-spin")}
@@ -358,7 +407,8 @@ function ClockDisplay() {
   }
 
   return (
-    <span className="font-mono text-sm text-text-secondary" aria-live="polite">
+    // aria-live="off": clock is decorative, announcing every second floods screen readers
+    <span className="font-mono text-sm text-text-secondary" aria-live="off">
       {time}
     </span>
   );
@@ -373,7 +423,6 @@ export function DashboardStatusBar() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState(REFRESH_INTERVAL_MS / 1000);
 
   const fetchStats = useCallback(async (showRefreshIndicator = false) => {
     if (showRefreshIndicator) {
@@ -384,7 +433,6 @@ export function DashboardStatusBar() {
       const data = await fetchDashboardStats();
       setStats(data);
       setError(null);
-      setCountdown(REFRESH_INTERVAL_MS / 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch stats");
     } finally {
@@ -398,7 +446,7 @@ export function DashboardStatusBar() {
     fetchStats();
   }, [fetchStats]);
 
-  // Auto-refresh interval
+  // Auto-refresh interval — CountdownTimer drives the visual countdown independently
   useEffect(() => {
     const interval = setInterval(() => {
       fetchStats(true);
@@ -407,20 +455,9 @@ export function DashboardStatusBar() {
     return () => clearInterval(interval);
   }, [fetchStats]);
 
-  // Countdown timer
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCountdown((prev) =>
-        prev > 0 ? prev - 1 : REFRESH_INTERVAL_MS / 1000,
-      );
-    }, COUNTDOWN_INTERVAL_MS);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleManualRefresh = () => {
+  const handleManualRefresh = useCallback(() => {
     fetchStats(true);
-  };
+  }, [fetchStats]);
 
   if (isLoading) {
     return <StatusBarSkeleton />;
@@ -497,7 +534,7 @@ export function DashboardStatusBar() {
       {/* Actions Section */}
       <div className="flex items-center gap-3">
         <RefreshButton
-          countdown={countdown}
+          totalSeconds={REFRESH_INTERVAL_MS / 1000}
           isRefreshing={isRefreshing}
           onRefresh={handleManualRefresh}
         />

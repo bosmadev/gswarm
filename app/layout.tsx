@@ -31,7 +31,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: process.env.GLOBAL_APP_DISPLAY_NAME,
+  title: process.env.GLOBAL_APP_DISPLAY_NAME || "GSwarm",
   description: process.env.GLOBAL_APP_DESCRIPTION,
 };
 
@@ -68,7 +68,9 @@ export default function RootLayout({
                 <ConfirmationProvider>
                   <CommandPaletteProvider>
                     <ReactGrabProvider>
-                      {children}
+                      <main>
+                        {children}
+                      </main>
                       <Toaster />
                     </ReactGrabProvider>
                   </CommandPaletteProvider>

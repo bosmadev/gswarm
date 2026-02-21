@@ -373,6 +373,7 @@ async function createLruSelectorAdapter(
 export class GSwarmClient {
   private lruSelector: LruSelectorAdapter | null = null;
   private initialized = false;
+  private initPromise: Promise<void> | null = null;
   private model: string;
   private deps: LruSelectorDeps;
 
@@ -382,12 +383,25 @@ export class GSwarmClient {
   }
 
   /**
-   * Initialize the client (lazy initialization)
+   * Initialize the client (lazy initialization).
+   *
+   * Promise-coalesces concurrent callers: if initialization is already in
+   * flight, all concurrent calls await the same Promise rather than each
+   * triggering a parallel createLruSelectorAdapter() call.
    */
   private async ensureInitialized(): Promise<void> {
-    if (!this.initialized || !this.lruSelector) {
+    if (this.initialized && this.lruSelector) return;
+    if (this.initPromise) return this.initPromise;
+
+    this.initPromise = (async () => {
       this.lruSelector = await createLruSelectorAdapter(this.deps);
       this.initialized = true;
+    })();
+
+    try {
+      await this.initPromise;
+    } finally {
+      this.initPromise = null;
     }
   }
 
@@ -614,6 +628,7 @@ export class GSwarmClient {
   async refresh(): Promise<void> {
     this.initialized = false;
     this.lruSelector = null;
+    this.initPromise = null;
     await this.ensureInitialized();
     consoleLog(PREFIX.INFO, "[GSwarmClient] Client refreshed");
   }

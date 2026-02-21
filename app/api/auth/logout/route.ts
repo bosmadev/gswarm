@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { parseAndValidate } from "@/lib/api-validation";
 import { PREFIX, consoleError, consoleWarn } from "@/lib/console";
 import { revokeToken as revokeOAuthToken } from "@/lib/gswarm/oauth";
-import { validateAdminSession } from "@/lib/gswarm/session";
+import { validateAdminPassword } from "@/lib/gswarm/session";
 import { deleteToken, loadToken } from "@/lib/gswarm/storage/tokens";
 
 interface LogoutRequestBody extends Record<string, unknown> {
@@ -18,7 +18,7 @@ interface LogoutRequestBody extends Record<string, unknown> {
 export async function POST(request: NextRequest) {
   try {
     // Validate admin session
-    const session = await validateAdminSession(request);
+    const session = await validateAdminPassword(request);
     if (!session.valid) {
       return NextResponse.json(
         { error: "Unauthorized", message: "Admin session required" },

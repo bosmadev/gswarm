@@ -2,8 +2,11 @@
  * SSE Streaming Support
  *
  * Provides OpenAI-compatible Server-Sent Events (SSE) streaming for chat completions.
- * Since the underlying Cloud Code API doesn't natively support streaming, this module
- * simulates streaming by chunking the complete response.
+ *
+ * Two modes are available:
+ * - `streamingResponse()` — simulates streaming by chunking a complete text response.
+ * - `streamingResponseFromStream()` — true streaming: forwards upstream ReadableStream
+ *   chunks as SSE events without buffering the full response first.
  */
 
 /**
@@ -201,6 +204,153 @@ export function streamingResponse(options: StreamingOptions): Response {
   });
 
   // Add rate limit headers if provided
+  if (rateLimitRemaining !== undefined) {
+    headers.set("X-RateLimit-Remaining", rateLimitRemaining.toString());
+  }
+  if (rateLimitReset !== undefined) {
+    headers.set("X-RateLimit-Reset", rateLimitReset.toString());
+  }
+
+  return new Response(stream, { headers });
+}
+
+// =============================================================================
+// TRUE STREAMING — forward upstream ReadableStream chunks incrementally
+// =============================================================================
+
+/**
+ * Options for true streaming from an upstream ReadableStream
+ */
+export interface StreamingFromStreamOptions {
+  /** Completion ID */
+  id: string;
+  /** Model name */
+  model: string;
+  /** Creation timestamp */
+  created: number;
+  /** Upstream ReadableStream<Uint8Array> — chunks forwarded as SSE events */
+  upstream: ReadableStream<Uint8Array>;
+  /** Rate limit remaining */
+  rateLimitRemaining?: number;
+  /** Rate limit reset timestamp */
+  rateLimitReset?: number;
+}
+
+/**
+ * Creates a true-streaming SSE response by forwarding upstream chunks as they
+ * arrive rather than buffering the full response first.
+ *
+ * Each upstream chunk is decoded and emitted as an OpenAI-compatible
+ * `chat.completion.chunk` SSE event. A final `[DONE]` message is appended
+ * once the upstream stream is exhausted.
+ *
+ * @param options - Streaming options with upstream ReadableStream
+ * @returns ReadableStream response forwarding chunks incrementally
+ */
+export function streamingResponseFromStream(
+  options: StreamingFromStreamOptions,
+): Response {
+  const { id, model, created, upstream, rateLimitRemaining, rateLimitReset } =
+    options;
+
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = upstream.getReader();
+
+      try {
+        // Send initial chunk with role
+        const initialChunk: StreamChunk = {
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model,
+          choices: [
+            {
+              index: 0,
+              delta: { role: "assistant" },
+              finish_reason: null,
+            },
+          ],
+        };
+        controller.enqueue(encoder.encode(formatSSE(initialChunk)));
+
+        // Forward upstream chunks as they arrive
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const text = decoder.decode(value, { stream: true });
+          if (!text) continue;
+
+          const contentChunk: StreamChunk = {
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [
+              {
+                index: 0,
+                delta: { content: text },
+                finish_reason: null,
+              },
+            ],
+          };
+          controller.enqueue(encoder.encode(formatSSE(contentChunk)));
+        }
+
+        // Flush any remaining bytes from the decoder
+        const remaining = decoder.decode();
+        if (remaining) {
+          const tailChunk: StreamChunk = {
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [
+              {
+                index: 0,
+                delta: { content: remaining },
+                finish_reason: null,
+              },
+            ],
+          };
+          controller.enqueue(encoder.encode(formatSSE(tailChunk)));
+        }
+
+        // Send final chunk and [DONE]
+        const finalChunk: StreamChunk = {
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model,
+          choices: [
+            {
+              index: 0,
+              delta: {},
+              finish_reason: "stop",
+            },
+          ],
+        };
+        controller.enqueue(encoder.encode(formatSSE(finalChunk)));
+        controller.enqueue(encoder.encode(formatDone()));
+        controller.close();
+      } catch (error) {
+        reader.releaseLock();
+        controller.error(error);
+      }
+    },
+  });
+
+  const headers = new Headers({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
   if (rateLimitRemaining !== undefined) {
     headers.set("X-RateLimit-Remaining", rateLimitRemaining.toString());
   }

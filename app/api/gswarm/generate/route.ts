@@ -23,6 +23,13 @@ import {
   corsPreflightResponse,
 } from "../_shared/auth";
 
+// =============================================================================
+// INPUT LIMITS
+// =============================================================================
+
+/** Maximum prompt length in characters */
+const MAX_PROMPT_LENGTH = 50_000;
+
 /**
  * Request body for generate endpoint
  */
@@ -96,6 +103,19 @@ export async function POST(request: NextRequest) {
         {
           error: "Validation failed",
           message: "Prompt cannot be empty",
+        },
+        { status: 400 },
+      ),
+    );
+  }
+
+  // Enforce prompt length limit
+  if (prompt.length > MAX_PROMPT_LENGTH) {
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Validation failed",
+          message: `Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`,
         },
         { status: 400 },
       ),

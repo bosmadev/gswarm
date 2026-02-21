@@ -8,23 +8,10 @@
 
 "use client";
 
-import {
-  AlertCircle,
-  Check,
-  Clock,
-  Cog,
-  FolderKanban,
-  Hand,
-  Home,
-  Key,
-  LayoutDashboard,
-  Search,
-  Terminal,
-  Type,
-  Users,
-} from "lucide-react";
+import { Check, Clock, Hand, Search, Type } from "lucide-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
+import { navItems } from "@/app/shared";
 import {
   CommandDialog,
   CommandEmpty,
@@ -82,75 +69,52 @@ interface NavigationItem {
 }
 
 // =============================================================================
-// NAVIGATION ITEMS (matches sidebar in shared.tsx)
+// NAVIGATION ITEMS — derived from shared.tsx to avoid duplication
+// Shortcuts and keywords are command-palette-specific additions
 // =============================================================================
 
-const navigationItems: NavigationItem[] = [
-  {
-    id: "home",
-    label: "Home",
-    icon: Home,
-    href: "/",
-    shortcut: "G H",
-    keywords: ["readme", "documentation", "start"],
-  },
-  {
-    id: "overview",
-    label: "Dashboard Overview",
-    icon: LayoutDashboard,
-    href: "/dashboard",
+/** Command-palette metadata keyed by nav item id */
+const NAV_PALETTE_META: Record<
+  string,
+  { shortcut: string; keywords?: string[] }
+> = {
+  home: { shortcut: "G H", keywords: ["readme", "documentation", "start"] },
+  overview: {
     shortcut: "G D",
     keywords: ["dashboard", "admin", "main"],
   },
-  {
-    id: "accounts",
-    label: "Accounts",
-    icon: Users,
-    href: "/dashboard?tab=accounts",
+  accounts: {
     shortcut: "G A",
     keywords: ["users", "oauth", "google", "tokens"],
   },
-  {
-    id: "projects",
-    label: "Projects",
-    icon: FolderKanban,
-    href: "/dashboard?tab=projects",
+  projects: {
     shortcut: "G P",
     keywords: ["gemini", "rotation", "api keys"],
   },
-  {
-    id: "errors",
-    label: "Error Log",
-    icon: AlertCircle,
-    href: "/dashboard?tab=errors",
+  errors: {
     shortcut: "G E",
     keywords: ["logs", "failures", "issues", "debug"],
   },
-  {
-    id: "cli",
-    label: "CLI",
-    icon: Terminal,
-    href: "/dashboard?tab=cli",
-    shortcut: "G C",
-    keywords: ["terminal", "command", "shell"],
-  },
-  {
-    id: "api-keys",
-    label: "API Keys",
-    icon: Key,
-    href: "/dashboard?tab=api-keys",
+  cli: { shortcut: "G C", keywords: ["terminal", "command", "shell"] },
+  "api-keys": {
     shortcut: "G K",
     keywords: ["keys", "authentication", "access"],
   },
-  {
-    id: "config",
-    label: "Configuration",
-    icon: Cog,
-    href: "/dashboard?tab=config",
+  config: {
     shortcut: "G S",
     keywords: ["settings", "model", "temperature", "gswarm"],
   },
-];
+};
+
+const navigationItems: NavigationItem[] = navItems
+  .filter((item) => item.id in NAV_PALETTE_META)
+  .map((item) => ({
+    id: item.id,
+    label: item.id === "overview" ? "Dashboard Overview" : item.label,
+    icon: item.icon,
+    href: item.href,
+    ...NAV_PALETTE_META[item.id],
+  }));
 
 // =============================================================================
 // FUZZY SEARCH

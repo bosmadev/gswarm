@@ -11,6 +11,7 @@
 
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { extractClientIp } from "@/app/api/gswarm/_shared/auth";
 
 // =============================================================================
 // Types
@@ -85,7 +86,9 @@ export class RateLimiter {
 
     if (entry.timestamps.length >= this.maxAttempts) {
       // Rate limit exceeded — calculate retry-after from oldest entry in window
-      const oldestInWindow = entry.timestamps[0];
+      // timestamps is non-empty at this point (length >= maxAttempts >= 1)
+      // biome-ignore lint/style/noNonNullAssertion: length check above guarantees [0] exists
+      const oldestInWindow = entry.timestamps[0]!;
       const retryAfterMs = oldestInWindow + this.windowMs - now;
       return {
         allowed: false,
@@ -138,27 +141,11 @@ export const authRateLimiter = new RateLimiter({
 // =============================================================================
 
 /**
- * Extract client IP from a Next.js request.
- * Checks standard proxy headers before falling back.
- */
-export function getClientIp(request: NextRequest): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    return forwarded.split(",")[0].trim();
-  }
-  return (
-    request.headers.get("x-real-ip")?.trim() ||
-    request.headers.get("x-client-ip")?.trim() ||
-    "unknown"
-  );
-}
-
-/**
  * Applies auth rate limiting to a request. Returns a 429 response if the limit
  * is exceeded, or `null` if the request is allowed.
  */
 export function checkAuthRateLimit(request: NextRequest): NextResponse | null {
-  const ip = getClientIp(request);
+  const ip = extractClientIp(request);
   const result = authRateLimiter.check(ip);
 
   if (!result.allowed) {

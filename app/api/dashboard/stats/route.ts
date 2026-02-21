@@ -17,6 +17,20 @@ import {
 } from "@/lib/gswarm/storage/base";
 import { getTodayDateString, loadMetrics } from "@/lib/gswarm/storage/metrics";
 
+// ============================================================================
+// IN-MEMORY CACHE — avoids full filesystem scan on every request
+// ============================================================================
+
+interface StatsCache {
+  data: DashboardStats;
+  timestamp: number;
+}
+
+const STATS_CACHE_TTL_MS = 60_000; // 60 seconds
+
+// Module-level singleton: survives across requests within the same Node process
+let statsCache: StatsCache | null = null;
+
 /** Project structure */
 interface Project {
   projectId: string;
@@ -55,6 +69,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Serve from cache if fresh
+    if (statsCache && Date.now() - statsCache.timestamp < STATS_CACHE_TTL_MS) {
+      return NextResponse.json(statsCache.data);
+    }
+
     // Count total accounts
     const tokensDir = getDataPath("oauth-tokens");
     const tokensResult = await listFiles(tokensDir, ".json");
@@ -104,6 +123,9 @@ export async function GET(request: NextRequest) {
       apiRequestsToday,
       errorRate,
     };
+
+    // Populate cache
+    statsCache = { data: stats, timestamp: Date.now() };
 
     return NextResponse.json(stats);
   } catch (error) {

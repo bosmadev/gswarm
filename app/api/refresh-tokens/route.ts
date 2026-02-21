@@ -8,7 +8,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
-import { validateAdminSession } from "@/lib/gswarm/session";
+import { validateAdminSession } from "@/lib/admin-session";
 import {
   getRefreshServiceStatus,
   refreshTokenByEmail,
@@ -25,7 +25,7 @@ import {
  */
 export async function POST(request: NextRequest) {
   try {
-    // Validate admin session
+    // Validate admin session (cookie-based auth via lib/admin-session)
     const session = await validateAdminSession(request);
     if (!session.valid) {
       return NextResponse.json(
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    // Validate admin session
+    // Validate admin session (cookie-based auth via lib/admin-session)
     const session = await validateAdminSession(request);
     if (!session.valid) {
       return NextResponse.json(

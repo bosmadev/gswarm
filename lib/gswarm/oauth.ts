@@ -10,6 +10,7 @@
 
 import { PREFIX, consoleDebug, consoleError, consoleLog } from "@/lib/console";
 import type { GoogleUserInfo, OAuthError, TokenData } from "./types";
+import { getCallbackUrl } from "./url-builder";
 
 // =============================================================================
 // OAuth Constants
@@ -22,14 +23,41 @@ import type { GoogleUserInfo, OAuthError, TokenData } from "./types";
  */
 const CLIENT_ID =
   "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
-const CLIENT_SECRET = "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";
 
 function getClientId(): string {
   return CLIENT_ID;
 }
 
+/**
+ * Get OAuth client secret from environment variable.
+ * Throws if GOOGLE_CLIENT_SECRET is not set to prevent silent failures.
+ */
 function getClientSecret(): string {
-  return CLIENT_SECRET;
+  const secret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!secret) {
+    throw new Error(
+      "GOOGLE_CLIENT_SECRET environment variable is not set. " +
+        "Add it to your .env file and encrypt with dotenvx.",
+    );
+  }
+  return secret;
+}
+
+/**
+ * Validate a redirectUri against the allowlist.
+ * Only the canonical callback URL (from getCallbackUrl()) is permitted.
+ *
+ * @param redirectUri - The URI to validate
+ * @throws {Error} If redirectUri does not match the allowlist
+ */
+function validateRedirectUri(redirectUri: string): void {
+  const allowed = getCallbackUrl();
+  if (redirectUri !== allowed) {
+    throw new Error(
+      `Invalid redirectUri: "${redirectUri}". ` +
+        `Only "${allowed}" is permitted.`,
+    );
+  }
 }
 
 /** OAuth scopes for cloud platform and user email access */
@@ -344,17 +372,30 @@ export function isValidationRequired(errorData: unknown): boolean {
 /**
  * Generate a Google OAuth authorization URL
  *
- * @param redirectUri - The callback URL to redirect to after authorization
- * @param state - Optional state parameter for CSRF protection
- * @returns The authorization URL string
+ * State is always included for CSRF protection. If not provided, a
+ * cryptographically random UUID is generated automatically.
+ *
+ * @param redirectUri - The callback URL to redirect to after authorization.
+ *   Must match the canonical callback URL from getCallbackUrl().
+ * @param state - CSRF state token. Auto-generated via crypto.randomUUID() if omitted.
+ * @returns Object with the authorization URL and the state value used.
+ *   Store the returned state in the session to verify on callback.
  *
  * @example
  * ```ts
- * const authUrl = generateAuthUrl("https://example.com/api/auth/callback", "random-state");
- * // Redirect user to authUrl
+ * const { url, state } = generateAuthUrl(getCallbackUrl());
+ * session.oauthState = state; // store for CSRF verification
+ * // Redirect user to url
  * ```
  */
-export function generateAuthUrl(redirectUri: string, state?: string): string {
+export function generateAuthUrl(
+  redirectUri: string,
+  state?: string,
+): { url: string; state: string } {
+  validateRedirectUri(redirectUri);
+
+  const resolvedState = state ?? crypto.randomUUID();
+
   const params: Record<string, string> = {
     client_id: getClientId(),
     redirect_uri: redirectUri,
@@ -362,15 +403,12 @@ export function generateAuthUrl(redirectUri: string, state?: string): string {
     scope: SCOPE,
     access_type: "offline",
     prompt: "consent",
+    state: resolvedState,
   };
-
-  if (state) {
-    params.state = state;
-  }
 
   const url = buildAuthUrl(params);
   consoleDebug(PREFIX.API, `Generated auth URL for redirect: ${redirectUri}`);
-  return url.toString();
+  return { url: url.toString(), state: resolvedState };
 }
 
 /**
@@ -392,6 +430,7 @@ export async function exchangeCodeForTokens(
   code: string,
   redirectUri: string,
 ): Promise<TokenData | null> {
+  validateRedirectUri(redirectUri);
   consoleDebug(PREFIX.API, "Exchanging authorization code for tokens");
 
   try {
@@ -647,6 +686,38 @@ export async function revokeToken(accessToken: string): Promise<boolean> {
     );
     return false;
   }
+}
+
+/**
+ * Build an OAuth authorization URL for CLI use (localhost callback).
+ *
+ * This bypasses the web allowlist because the CLI OAuth server binds to a
+ * dynamic localhost port. Should only be used by the CLI authentication flow,
+ * not by web routes (use generateAuthUrl for those).
+ *
+ * @param redirectUri - Localhost callback URL (e.g. http://127.0.0.1:{port}/callback)
+ * @param state - CSRF state token. Auto-generated if omitted.
+ * @returns Object with the authorization URL and the state value used.
+ */
+export function generateCliAuthUrl(
+  redirectUri: string,
+  state?: string,
+): { url: string; state: string } {
+  const resolvedState = state ?? crypto.randomUUID();
+
+  const params: Record<string, string> = {
+    client_id: getClientId(),
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: SCOPE,
+    access_type: "offline",
+    prompt: "consent",
+    state: resolvedState,
+  };
+
+  const url = buildAuthUrl(params);
+  consoleDebug(PREFIX.API, `Generated CLI auth URL for redirect: ${redirectUri}`);
+  return { url: url.toString(), state: resolvedState };
 }
 
 // =============================================================================

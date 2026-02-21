@@ -152,6 +152,29 @@ function setCachedErrors(date: string, data: DailyErrorLog): void {
 }
 
 /**
+ * Evicts all expired entries from the errors cache.
+ * Runs on a periodic interval to prevent unbounded Map growth.
+ */
+function evictExpiredErrors(): void {
+  const now = Date.now();
+  for (const [key, entry] of errorsCacheByDate.entries()) {
+    if (now >= entry.expiresAt) {
+      errorsCacheByDate.delete(key);
+    }
+  }
+}
+
+// Periodic cleanup every 5 minutes — prevents unbounded memory growth when
+// many distinct dates accumulate (e.g., long-running server instances).
+if (typeof setInterval !== "undefined") {
+  const interval = setInterval(evictExpiredErrors, 5 * 60 * 1000);
+  // Allow process to exit without being held by this timer
+  if (typeof interval === "object" && interval !== null && "unref" in interval) {
+    (interval as NodeJS.Timeout).unref();
+  }
+}
+
+/**
  * Gets the Redis key for errors on a specific date
  */
 export function getErrorsKey(date: string): string {

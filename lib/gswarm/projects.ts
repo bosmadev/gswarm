@@ -78,6 +78,12 @@ let cachedProjects: GcpProjectInfo[] = [];
 /** Timestamp when GCP projects were last cached */
 let projectsCacheTime = 0;
 
+/**
+ * In-flight fetch promise — coalesces concurrent callers when the cache is
+ * stale so that only one upstream request is issued per cache miss.
+ */
+let fetchInFlight: Promise<GcpProjectInfo[]> | null = null;
+
 // =============================================================================
 // Internal Helpers
 // =============================================================================
@@ -441,114 +447,131 @@ export async function getAllGcpProjects(
     return cachedProjects;
   }
 
-  consoleLog(PREFIX.INFO, "Discovering GCP projects...");
-
-  // Get all valid tokens
-  const tokensResult = await getValidTokens();
-  if (!tokensResult.success) {
-    consoleError(
-      PREFIX.ERROR,
-      `Failed to get valid tokens: ${tokensResult.error}`,
-    );
-    return cachedProjects; // Return stale cache on error
+  // Coalesce concurrent callers: if a fetch is already in-flight, all
+  // callers that missed the cache share that single Promise.
+  if (fetchInFlight) {
+    consoleDebug(PREFIX.DEBUG, "GCP project fetch already in-flight, coalescing");
+    return fetchInFlight;
   }
 
-  const tokens = tokensResult.data;
-  if (tokens.length === 0) {
-    consoleDebug(
-      PREFIX.DEBUG,
-      "No valid tokens available for project discovery",
-    );
-    return [];
-  }
+  // Start the fetch and store the Promise so concurrent callers can join it.
+  fetchInFlight = (async (): Promise<GcpProjectInfo[]> => {
+    try {
+      consoleLog(PREFIX.INFO, "Discovering GCP projects...");
 
-  consoleDebug(
-    PREFIX.DEBUG,
-    `Discovering projects for ${tokens.length} token(s)`,
-  );
-
-  // Fetch projects for ALL tokens in parallel
-  const tokenResults = await Promise.allSettled(
-    tokens.map((token) => fetchProjectsForToken(token)),
-  );
-
-  // Deduplicate projects across tokens, tracking which token discovered each
-  const seenProjectIds = new Set<string>();
-  const projectTokenPairs: { project: GcpProject; token: StoredToken }[] = [];
-
-  for (let i = 0; i < tokenResults.length; i++) {
-    const result = tokenResults[i];
-    const token = tokens[i];
-
-    if (result.status === "rejected") {
-      consoleError(
-        PREFIX.ERROR,
-        `Project discovery failed for ${token.email}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
-      );
-      continue; // Skip this token, proceed with others
-    }
-
-    const gcpProjects = result.value;
-    consoleDebug(
-      PREFIX.DEBUG,
-      `Found ${gcpProjects.length} projects for ${token.email}`,
-    );
-
-    for (const project of gcpProjects) {
-      if (seenProjectIds.has(project.projectId)) {
-        continue;
+      // Get all valid tokens
+      const tokensResult = await getValidTokens();
+      if (!tokensResult.success) {
+        consoleError(
+          PREFIX.ERROR,
+          `Failed to get valid tokens: ${tokensResult.error}`,
+        );
+        return cachedProjects; // Return stale cache on error
       }
-      seenProjectIds.add(project.projectId);
-      projectTokenPairs.push({ project, token });
-    }
-  }
 
-  // Check API enablement for ALL unique projects in parallel
-  const apiCheckResults = await Promise.allSettled(
-    projectTokenPairs.map(({ project, token }) =>
-      checkApiEnabled(project.projectId, token.access_token),
-    ),
-  );
+      const tokens = tokensResult.data;
+      if (tokens.length === 0) {
+        consoleDebug(
+          PREFIX.DEBUG,
+          "No valid tokens available for project discovery",
+        );
+        return [];
+      }
 
-  const allProjects: GcpProjectInfo[] = [];
-
-  for (let i = 0; i < projectTokenPairs.length; i++) {
-    const { project, token } = projectTokenPairs[i];
-    const apiResult = apiCheckResults[i];
-
-    // If the API check itself rejected, treat as disabled (partial recovery)
-    const apiEnabled =
-      apiResult.status === "fulfilled" ? apiResult.value : false;
-
-    if (apiResult.status === "rejected") {
-      consoleError(
-        PREFIX.ERROR,
-        `API check rejected for ${project.projectId}: ${apiResult.reason instanceof Error ? apiResult.reason.message : String(apiResult.reason)}`,
+      consoleDebug(
+        PREFIX.DEBUG,
+        `Discovering projects for ${tokens.length} token(s)`,
       );
+
+      // Fetch projects for ALL tokens in parallel
+      const tokenResults = await Promise.allSettled(
+        tokens.map((token) => fetchProjectsForToken(token)),
+      );
+
+      // Deduplicate projects across tokens, tracking which token discovered each
+      const seenProjectIds = new Set<string>();
+      const projectTokenPairs: { project: GcpProject; token: StoredToken }[] = [];
+
+      tokenResults.forEach((result, i) => {
+        const token = tokens[i];
+        if (!token) return;
+
+        if (result.status === "rejected") {
+          consoleError(
+            PREFIX.ERROR,
+            `Project discovery failed for ${token.email}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+          );
+          return; // Skip this token, proceed with others
+        }
+
+        const gcpProjects = result.value;
+        consoleDebug(
+          PREFIX.DEBUG,
+          `Found ${gcpProjects.length} projects for ${token.email}`,
+        );
+
+        for (const project of gcpProjects) {
+          if (seenProjectIds.has(project.projectId)) {
+            continue;
+          }
+          seenProjectIds.add(project.projectId);
+          projectTokenPairs.push({ project, token });
+        }
+      });
+
+      // Check API enablement for ALL unique projects in parallel
+      const apiCheckResults = await Promise.allSettled(
+        projectTokenPairs.map(({ project, token }) =>
+          checkApiEnabled(project.projectId, token.access_token),
+        ),
+      );
+
+      const allProjects: GcpProjectInfo[] = [];
+
+      projectTokenPairs.forEach(({ project, token }, i) => {
+        const apiResult = apiCheckResults[i];
+        if (!apiResult) return;
+
+        // If the API check itself rejected, treat as disabled (partial recovery)
+        const apiEnabled =
+          apiResult.status === "fulfilled" ? apiResult.value : false;
+
+        if (apiResult.status === "rejected") {
+          consoleError(
+            PREFIX.ERROR,
+            `API check rejected for ${project.projectId}: ${apiResult.reason instanceof Error ? apiResult.reason.message : String(apiResult.reason)}`,
+          );
+        }
+
+        const projectInfo: GcpProjectInfo = {
+          project_id: project.projectId,
+          name: project.name,
+          project_number: project.projectNumber,
+          api_enabled: apiEnabled,
+          owner_email: token.email,
+          token_id: token.email, // Using email as token identifier
+        };
+
+        allProjects.push(projectInfo);
+      });
+
+      // Update cache
+      cachedProjects = allProjects;
+      projectsCacheTime = now;
+
+      consoleLog(
+        PREFIX.SUCCESS,
+        `Discovered ${allProjects.length} GCP projects (${allProjects.filter((p) => p.api_enabled).length} with API enabled)`,
+      );
+
+      return allProjects;
+    } finally {
+      // Always clear the in-flight Promise so subsequent calls start fresh
+      fetchInFlight = null;
     }
+  })();
 
-    const projectInfo: GcpProjectInfo = {
-      project_id: project.projectId,
-      name: project.name,
-      project_number: project.projectNumber,
-      api_enabled: apiEnabled,
-      owner_email: token.email,
-      token_id: token.email, // Using email as token identifier
-    };
-
-    allProjects.push(projectInfo);
-  }
-
-  // Update cache
-  cachedProjects = allProjects;
-  projectsCacheTime = now;
-
-  consoleLog(
-    PREFIX.SUCCESS,
-    `Discovered ${allProjects.length} GCP projects (${allProjects.filter((p) => p.api_enabled).length} with API enabled)`,
-  );
-
-  return allProjects;
+  return fetchInFlight;
 }
 
 /**
@@ -593,5 +616,6 @@ export function groupProjectsByOwner(
 export function invalidateProjectsCache(): void {
   cachedProjects = [];
   projectsCacheTime = 0;
+  fetchInFlight = null;
   consoleDebug(PREFIX.DEBUG, "GCP projects cache invalidated");
 }

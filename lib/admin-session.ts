@@ -15,6 +15,7 @@
  */
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
 import type { NextRequest } from "next/server";
@@ -86,14 +87,18 @@ export async function readSessions(): Promise<SessionStorage> {
 }
 
 /**
- * Writes sessions to storage
+ * Writes sessions to storage atomically.
+ * Writes to a temp file first, then renames to prevent partial writes from
+ * corrupting the session file on concurrent requests or crashes.
  */
 export async function writeSessions(storage: SessionStorage): Promise<void> {
   await ensureSessionsFile();
-  await fsPromises.writeFile(
-    SESSIONS_FILE_PATH,
-    JSON.stringify(storage, null, 2),
-  );
+  const tmpPath = `${SESSIONS_FILE_PATH}.tmp`;
+  const data = JSON.stringify(storage, null, 2);
+  await fsPromises.writeFile(tmpPath, data, { encoding: "utf-8" });
+  // rename is atomic on POSIX; on Windows it falls back to a copy+delete which
+  // is still safer than writing directly to the target file.
+  fs.renameSync(tmpPath, SESSIONS_FILE_PATH);
 }
 
 /**

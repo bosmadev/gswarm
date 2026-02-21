@@ -55,6 +55,29 @@ function setCachedMetrics(date: string, data: DailyMetrics): void {
 }
 
 /**
+ * Evicts all expired entries from the metrics cache.
+ * Runs on a periodic interval to prevent unbounded Map growth.
+ */
+function evictExpiredMetrics(): void {
+  const now = Date.now();
+  for (const [key, entry] of metricsCacheByDate.entries()) {
+    if (now >= entry.expiresAt) {
+      metricsCacheByDate.delete(key);
+    }
+  }
+}
+
+// Periodic cleanup every 5 minutes — prevents unbounded memory growth when
+// many distinct dates accumulate (e.g., long-running server instances).
+if (typeof setInterval !== "undefined") {
+  const interval = setInterval(evictExpiredMetrics, 5 * 60 * 1000);
+  // Allow process to exit without being held by this timer
+  if (typeof interval === "object" && interval !== null && "unref" in interval) {
+    (interval as NodeJS.Timeout).unref();
+  }
+}
+
+/**
  * Gets the Redis key for metrics on a specific date
  */
 export function getMetricsKey(date: string): string {

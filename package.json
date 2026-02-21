@@ -42,7 +42,7 @@
     "vitest:ui": "vitest --ui",
     "pytest": "cd python && uv run pytest",
     "############ BUILDING ############": "",
-    "tw:upgrade": "pnpm dlx @tailwindcss/upgrade --force",
+    "tw:upgrade": "pnpm dlx @tailwindcss/upgrade@^4.0.0",
     "validate": "(pnpm tw:upgrade || echo [WARN] Tailwind upgrade skipped) && pnpm knip && pnpm check:all && pnpm tsc && pnpm vitest:run && pnpm pytest",
     "version:sync": "node --experimental-transform-types python/sync-pyproject.ts",
     "build": "pnpm version:sync && pnpm rimraf:next && pnpm validate && next build",
@@ -54,7 +54,11 @@
     "env:decrypt": "dotenvx decrypt",
     "env:check": "node -e \"const f=require('fs').readFileSync('.env','utf8'); process.exit(f.includes('encrypted:') ? (console.log('✅ .env encrypted'),0) : (console.log('❌ .env NOT encrypted'),1))\""
   },
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "dependencies": {
+    "@dotenvx/dotenvx": "^1.51.4",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -109,7 +113,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.10",
-    "@dotenvx/dotenvx": "^1.51.4",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^25.0.3",
     "@types/node-cron": "^3.0.11",

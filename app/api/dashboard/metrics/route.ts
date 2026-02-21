@@ -132,7 +132,12 @@ export async function GET(request: NextRequest) {
       },
     };
 
-    return NextResponse.json(response);
+    return NextResponse.json(response, {
+      headers: {
+        // Cache per-user for 30 seconds; historical metrics change slowly
+        "Cache-Control": "private, max-age=30",
+      },
+    });
   } catch (error) {
     consoleError(
       PREFIX.ERROR,

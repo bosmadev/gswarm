@@ -92,6 +92,10 @@ function getSessionId(request: NextRequest): string | null {
  * SECURITY: Only accepts credentials via Authorization header or
  * X-Admin-Password header. Cookie-based password transmission was
  * removed to prevent exposure in browser history/logs and XSS risk.
+ *
+ * TODO: Deprecate X-Admin-Password header — it transmits the password on every
+ * request and is visible in server logs. Migrate callers to cookie-based
+ * session auth via lib/admin-session.ts (createSession/validateAdminSession).
  */
 function getAdminCredentials(request: NextRequest): string | null {
   // Check Authorization header (Basic auth)
@@ -108,6 +112,7 @@ function getAdminCredentials(request: NextRequest): string | null {
   }
 
   // Check X-Admin-Password header
+  // TODO: Deprecated — see note above. Remove once all callers migrate.
   const passwordHeader = request.headers.get("x-admin-password");
   if (passwordHeader) {
     return passwordHeader;
@@ -135,42 +140,32 @@ function safePasswordCompare(provided: string, expected: string): boolean {
 }
 
 /**
- * Validate admin session from request
+ * Validate admin password from request credentials.
  *
  * Checks for valid admin credentials via:
  * - Basic Authorization header
- * - X-Admin-Password header
- * - admin_password cookie
+ * - X-Admin-Password header (deprecated — see getAdminCredentials TODO)
+ *
+ * SECURITY: ADMIN_PASSWORD must be configured in all environments.
+ * Access is denied if the password is not set.
  *
  * @param request - Next.js request object
  * @returns AdminSession with validation result and state management methods
  */
-export async function validateAdminSession(
+export async function validateAdminPassword(
   request: NextRequest,
 ): Promise<AdminSession> {
   const adminPassword = getAdminPassword();
 
-  // If no admin password configured, check environment
+  // SECURITY: Fail closed in all environments — require password always.
   if (!adminPassword) {
-    // SECURITY: Fail closed in production - deny access if no password configured
-    if (process.env.NODE_ENV === "production") {
-      consoleError(
-        PREFIX.ERROR,
-        "[Session] ADMIN_PASSWORD not configured in production - denying access",
-      );
-      return createInvalidSession(
-        "Admin access disabled: ADMIN_PASSWORD not configured",
-      );
-    }
-
-    // Development mode: allow access but log prominently
-    // SECURITY: This path is only reachable when NODE_ENV !== "production"
-    // AND ADMIN_PASSWORD is not set. Still log a warning for visibility.
     consoleError(
-      PREFIX.WARNING,
-      "[Session] ⚠️ ADMIN_PASSWORD not configured — dev mode access granted. Set ADMIN_PASSWORD to secure this endpoint.",
+      PREFIX.ERROR,
+      "[Session] ADMIN_PASSWORD not configured — denying access. Set ADMIN_PASSWORD to enable admin endpoints.",
     );
-    return createValidSession("dev-session");
+    return createInvalidSession(
+      "Admin access disabled: ADMIN_PASSWORD not configured",
+    );
   }
 
   // Get credentials from request
@@ -250,5 +245,5 @@ function createInvalidSession(error: string): AdminSession {
 // =============================================================================
 
 export default {
-  validateAdminSession,
+  validateAdminPassword,
 };

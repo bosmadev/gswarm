@@ -15,19 +15,26 @@ import {
 } from "@/lib/gswarm/oauth";
 import { saveToken } from "@/lib/gswarm/storage/tokens";
 import { getCallbackUrl } from "@/lib/gswarm/url-builder";
+import { escapeHtml } from "@/lib/utils";
+
+/** Cookie name used to store CSRF state parameter during OAuth flow */
+const OAUTH_STATE_COOKIE = "oauth_state";
 
 /**
  * Returns an HTML page that communicates result to the opener and closes.
  */
 function popupResponse(success: boolean, message: string): NextResponse {
+  const safeMessage = escapeHtml(message);
+  const safeTitle = success ? "Auth Successful" : "Auth Error";
+  const safeHeading = success ? "&#x2713; Account Added" : "&#x2717; Authentication Failed";
   const payload = JSON.stringify({ success, message });
   return new NextResponse(
     `<!DOCTYPE html>
 <html>
-<head><title>${success ? "Auth Successful" : "Auth Error"}</title></head>
+<head><title>${safeTitle}</title></head>
 <body style="font-family: system-ui; padding: 2rem; text-align: center; background: #0c0c14; color: #eaecef;">
-  <h2>${success ? "✓ Account Added" : "✗ Authentication Failed"}</h2>
-  <p>${message}</p>
+  <h2>${safeHeading}</h2>
+  <p>${safeMessage}</p>
   <p style="color: #71717a; font-size: 0.875rem;">This window will close automatically...</p>
   <script>
     if (window.opener) {
@@ -53,6 +60,14 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const code = searchParams.get("code");
     const error = searchParams.get("error");
+    const stateParam = searchParams.get("state");
+
+    // Validate CSRF state parameter against cookie-stored value
+    const storedState = request.cookies.get(OAUTH_STATE_COOKIE)?.value;
+    if (!storedState || !stateParam || storedState !== stateParam) {
+      consoleError(PREFIX.API, "OAuth CSRF state mismatch or missing state");
+      return popupResponse(false, "Invalid or missing state parameter");
+    }
 
     // Handle OAuth errors from Google
     if (error) {
@@ -86,11 +101,13 @@ export async function GET(request: NextRequest) {
     await saveToken(email, tokens);
 
     consoleLog(PREFIX.SUCCESS, `OAuth account added: ${email}`);
-    return popupResponse(true, `Account ${email} added successfully`);
+
+    const response = popupResponse(true, `Account ${email} added successfully`);
+    // Clear the CSRF state cookie after successful use
+    response.cookies.set(OAUTH_STATE_COOKIE, "", { maxAge: 0, path: "/" });
+    return response;
   } catch (error) {
     consoleError(PREFIX.API, "Error processing OAuth callback:", error);
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    return popupResponse(false, errorMessage);
+    return popupResponse(false, "Authentication failed");
   }
 }

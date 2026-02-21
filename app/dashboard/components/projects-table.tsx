@@ -203,8 +203,15 @@ function SortableHeader({
     }
   };
 
+  // aria-sort: communicate current sort state to assistive technologies
+  const ariaSort: React.AriaAttributes["aria-sort"] = isActive
+    ? currentDirection === "asc"
+      ? "ascending"
+      : "descending"
+    : "none";
+
   return (
-    <TableHead className={className}>
+    <TableHead className={className} aria-sort={ariaSort}>
       <button
         type="button"
         onClick={handleClick}
@@ -493,6 +500,9 @@ function EmptyState() {
 
 export function ProjectsTable() {
   const [search, setSearch] = React.useState("");
+  // Debounce search: useDeferredValue defers the value used in the API key
+  // by one React render cycle, batching rapid keystrokes into a single fetch
+  const deferredSearch = React.useDeferredValue(search);
   const [accountFilter, setAccountFilter] = React.useState("all");
   const [sortField, setSortField] = React.useState<SortField>("lastUsed");
   const [sortDirection, setSortDirection] =
@@ -502,14 +512,14 @@ export function ProjectsTable() {
   const [togglingId, setTogglingId] = React.useState<string | null>(null);
   const notifications = useNotifications();
 
-  // Build query params
+  // Build query params — uses deferredSearch to avoid fetching on every keystroke
   const queryParams = new URLSearchParams({
     page: page.toString(),
     pageSize: "10",
     sortField,
     sortDirection,
   });
-  if (search) queryParams.set("search", search);
+  if (deferredSearch) queryParams.set("search", deferredSearch);
   if (accountFilter !== "all") queryParams.set("accountId", accountFilter);
 
   const { data, error, isLoading, mutate } = useSWR<ProjectsResponse>(

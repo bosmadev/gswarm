@@ -40,17 +40,42 @@ const MODEL_MAP: Record<string, string> = {
 };
 
 /**
- * Maps OpenAI model to Gemini model
- * Pass-through if already a Gemini model
+ * Allowlist of supported Gemini model IDs.
+ * Any gemini-* model string not in this list is rejected.
  */
-function mapModel(openaiModel: string): string {
-  // If it's already a gemini-* model, pass through
+const ALLOWED_MODELS = new Set<string>([
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "gemini-1.5-pro",
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-8b",
+  "gemini-3-flash-preview",
+  "gemini-3-pro-preview",
+]);
+
+/**
+ * Maps OpenAI model to Gemini model.
+ * Returns null if the resolved Gemini model is not in the allowlist.
+ */
+function mapModel(openaiModel: string): string | null {
+  let geminiModel: string;
+
+  // If it's already a gemini-* model, validate against allowlist directly
   if (openaiModel.startsWith("gemini-")) {
-    return openaiModel;
+    geminiModel = openaiModel;
+  } else {
+    // Use mapping table, default to gemini-2.0-flash
+    geminiModel = MODEL_MAP[openaiModel] || "gemini-2.0-flash";
   }
 
-  // Otherwise use mapping table, default to gemini-2.0-flash
-  return MODEL_MAP[openaiModel] || "gemini-2.0-flash";
+  // Validate against allowlist
+  if (!ALLOWED_MODELS.has(geminiModel)) {
+    return null;
+  }
+
+  return geminiModel;
 }
 
 // =============================================================================
@@ -114,9 +139,10 @@ function generateCompletionId(): string {
 }
 
 /**
- * Converts messages array to a single prompt string
+ * Converts messages array to a single prompt string.
+ * Exported for unit testing.
  */
-function messagesToPrompt(messages: ChatMessage[]): {
+export function messagesToPrompt(messages: ChatMessage[]): {
   prompt: string;
   systemPrompt?: string;
 } {
@@ -137,17 +163,16 @@ function messagesToPrompt(messages: ChatMessage[]): {
   }
 
   // The last user message is the main prompt
-  let lastUserIndex = -1;
+  let lastUserMessage: ChatMessage | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
-      lastUserIndex = i;
+    if (messages[i]?.role === "user") {
+      lastUserMessage = messages[i];
       break;
     }
   }
-  const prompt =
-    lastUserIndex >= 0
-      ? messages[lastUserIndex].content
-      : conversationParts.join("\n\n");
+  const prompt = lastUserMessage
+    ? lastUserMessage.content
+    : conversationParts.join("\n\n");
 
   return { prompt, systemPrompt };
 }
@@ -239,10 +264,22 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Map OpenAI model to Gemini model
+  // Map OpenAI model to Gemini model and validate against allowlist
   const geminiModel = requestedModel
     ? mapModel(requestedModel)
     : "gemini-2.0-flash";
+
+  if (geminiModel === null) {
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Validation failed",
+          message: `Unsupported model: '${requestedModel}'. Supported models: ${[...ALLOWED_MODELS].join(", ")}`,
+        },
+        { status: 400 },
+      ),
+    );
+  }
 
   consoleDebug(
     PREFIX.DEBUG,

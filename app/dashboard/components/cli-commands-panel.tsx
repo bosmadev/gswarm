@@ -566,11 +566,12 @@ export function CLICommandsPanel({
                 size="icon"
                 onClick={copyAllOutput}
                 disabled={outputs.length === 0}
+                aria-label={copiedId === "all" ? "Copied!" : "Copy all output"}
               >
                 {copiedId === "all" ? (
-                  <Check className="w-4 h-4 text-green" />
+                  <Check className="w-4 h-4 text-green" aria-hidden="true" />
                 ) : (
-                  <ClipboardCopy className="w-4 h-4" />
+                  <ClipboardCopy className="w-4 h-4" aria-hidden="true" />
                 )}
               </Button>
             </Tooltip>
@@ -580,8 +581,9 @@ export function CLICommandsPanel({
                 size="icon"
                 onClick={() => setClearDialogOpen(true)}
                 disabled={outputs.length === 0}
+                aria-label="Clear command history"
               >
-                <Trash2 className="w-4 h-4" />
+                <Trash2 className="w-4 h-4" aria-hidden="true" />
               </Button>
             </Tooltip>
           </div>
@@ -619,7 +621,12 @@ export function CLICommandsPanel({
             className="h-full max-h-96"
             onScrollCapture={handleScroll}
           >
-            <div className="p-4 font-mono text-sm">
+            <div
+              className="p-4 font-mono text-sm"
+              aria-live="polite"
+              aria-label="Terminal output"
+              aria-relevant="additions"
+            >
               {outputs.length === 0 ? (
                 <div className="text-gray-500 italic">
                   No commands executed yet. Click a command button above to get
@@ -679,8 +686,9 @@ export function CLICommandsPanel({
                 size="icon"
                 className="absolute bottom-3 right-3 h-8 w-8 rounded-full shadow-lg"
                 onClick={scrollToBottom}
+                aria-label="Scroll to bottom of output"
               >
-                <ArrowDown className="w-4 h-4" />
+                <ArrowDown className="w-4 h-4" aria-hidden="true" />
               </Button>
             </Tooltip>
           )}

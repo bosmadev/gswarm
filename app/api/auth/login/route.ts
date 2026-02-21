@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { PREFIX, consoleError } from "@/lib/console";
 import { generateAuthUrl } from "@/lib/gswarm/oauth";
-import { validateAdminSession } from "@/lib/gswarm/session";
+import { validateAdminPassword } from "@/lib/gswarm/session";
 
 /**
  * POST /api/auth/login
@@ -11,7 +11,7 @@ import { validateAdminSession } from "@/lib/gswarm/session";
 export async function POST(request: NextRequest) {
   try {
     // Validate admin session
-    const session = await validateAdminSession(request);
+    const session = await validateAdminPassword(request);
     if (!session.valid) {
       return NextResponse.json(
         { error: "Unauthorized", message: "Admin session required" },
@@ -26,22 +26,26 @@ export async function POST(request: NextRequest) {
     // The state is stored server-side to prevent CSRF attacks
     await session.setState(state);
 
-    // Build redirect URI
-    const redirectUri = `${process.env.GLOBAL_URL}/api/auth/callback`;
+    // Build redirect URI via centralized url-builder
+    const { getCallbackUrl } = await import("@/lib/gswarm/url-builder");
+    const redirectUri = getCallbackUrl();
 
-    // Generate Google OAuth URL
-    const authUrl = generateAuthUrl(redirectUri, state);
+    // Generate Google OAuth URL (state is returned alongside url)
+    const { url: authUrl, state: resolvedState } = generateAuthUrl(
+      redirectUri,
+      state,
+    );
 
     return NextResponse.json({
       authUrl,
-      state,
+      state: resolvedState,
     });
   } catch (error) {
     consoleError(PREFIX.API, "Error initiating OAuth flow:", error);
     return NextResponse.json(
       {
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: "Authentication failed",
       },
       { status: 500 },
     );

@@ -103,26 +103,35 @@ export function extractApiKey(request: NextRequest): string | null {
 
 /**
  * Extracts client IP from request headers.
- * Checks common proxy headers first (X-Forwarded-For, X-Real-IP),
- * then falls back to X-Client-IP or "unknown".
+ *
+ * SECURITY: Proxy headers (X-Forwarded-For, X-Real-IP) can be spoofed by
+ * clients unless the request comes through a trusted proxy. Set the
+ * TRUSTED_PROXY environment variable to opt in to trusting these headers.
+ * When TRUSTED_PROXY is not set, the function falls back to X-Client-IP or
+ * "unknown" — avoiding the risk of IP spoofing via forged forwarding headers.
  *
  * @param request - The incoming Next.js request
  * @returns The client IP address string, or "unknown" if not determinable
  */
 export function extractClientIp(request: NextRequest): string {
-  // Check forwarded headers (common in production with proxies)
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    // Take the first IP in the chain (original client)
-    return forwarded.split(",")[0].trim();
+  const trustedProxy = process.env.TRUSTED_PROXY;
+
+  if (trustedProxy) {
+    // Proxy headers are trusted — use X-Forwarded-For or X-Real-IP
+    const forwarded = request.headers.get("x-forwarded-for");
+    if (forwarded) {
+      // Take the first IP in the chain (original client)
+      const firstIp = forwarded.split(",")[0];
+      if (firstIp) return firstIp.trim();
+    }
+
+    const realIp = request.headers.get("x-real-ip");
+    if (realIp) {
+      return realIp.trim();
+    }
   }
 
-  const realIp = request.headers.get("x-real-ip");
-  if (realIp) {
-    return realIp.trim();
-  }
-
-  // Fall back to request IP (may not be available in all environments)
+  // Fall back to socket IP via X-Client-IP (not spoofable by end clients) or "unknown"
   return request.headers.get("x-client-ip") || "unknown";
 }
 

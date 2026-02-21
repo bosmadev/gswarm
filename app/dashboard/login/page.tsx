@@ -71,9 +71,12 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg-primary p-4">
       {/* Background gradient effects */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+      <div
+        className="fixed inset-0 pointer-events-none overflow-hidden z-0"
+        aria-hidden="true"
+      >
         <div
-          className="absolute -top-32 -left-32 w-96 h-96 rounded-full blur-[100px] animate-pulse"
+          className="absolute -top-32 -left-32 w-96 h-96 rounded-full blur-[100px] animate-pulse motion-reduce:animate-none"
           style={{
             animationDuration: "8s",
             background:
@@ -81,7 +84,7 @@ export default function LoginPage() {
           }}
         />
         <div
-          className="absolute -bottom-32 -right-32 w-80 h-80 rounded-full blur-[100px] animate-pulse"
+          className="absolute -bottom-32 -right-32 w-80 h-80 rounded-full blur-[100px] animate-pulse motion-reduce:animate-none"
           style={{
             animationDuration: "10s",
             animationDelay: "2s",
@@ -96,18 +99,26 @@ export default function LoginPage() {
         <CardHeader className="text-center space-y-2">
           {/* Logo */}
           <div className="flex justify-center mb-2">
-            <div className="w-14 h-14 rounded-xl bg-orange/20 flex items-center justify-center border border-orange/30">
-              <span className="text-orange font-bold text-2xl">G</span>
+            <div
+              className="w-14 h-14 rounded-xl bg-orange/20 flex items-center justify-center border border-orange/30"
+              role="img"
+              aria-label="GSwarm logo"
+            >
+              <span className="text-orange font-bold text-2xl" aria-hidden="true">G</span>
             </div>
           </div>
-          <CardTitle className="text-2xl">GSwarm Dashboard</CardTitle>
+          <CardTitle id="login-heading" className="text-2xl">GSwarm Dashboard</CardTitle>
           <CardDescription>
             Sign in to access the admin dashboard
           </CardDescription>
         </CardHeader>
 
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-4"
+            aria-labelledby="login-heading"
+          >
             {/* Error Message */}
             {error && (
               <div
