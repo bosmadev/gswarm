@@ -15,7 +15,11 @@ import { PREFIX, consoleError } from "@/lib/console";
 import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 import { loadMetrics } from "@/lib/gswarm/storage/metrics";
 import type { DailyMetrics } from "@/lib/gswarm/types";
-import { addCorsHeaders, corsPreflightResponse } from "../../_shared/auth";
+import {
+  addCorsHeaders,
+  corsPreflightResponse,
+  extractClientIp,
+} from "../../_shared/auth";
 
 const MAX_RANGE_DAYS = 30;
 
@@ -28,17 +32,6 @@ function extractApiKey(request: NextRequest): string | null {
     return null;
   }
   return authHeader.slice(7);
-}
-
-/**
- * Get client IP from request headers
- */
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  );
 }
 
 /**
@@ -57,7 +50,7 @@ async function authenticateExportRequest(
     return { valid: false, error: "Missing authentication" };
   }
 
-  const clientIp = getClientIp(request);
+  const clientIp = extractClientIp(request);
   return validateApiKey(apiKey, clientIp, "/api/gswarm/metrics/export");
 }
 

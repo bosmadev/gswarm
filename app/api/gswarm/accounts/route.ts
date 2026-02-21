@@ -11,7 +11,11 @@ import { validateAdminSession } from "@/lib/admin-session";
 import { PREFIX, consoleError } from "@/lib/console";
 import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 import { getTokenExpiryTime, loadAllTokens } from "@/lib/gswarm/storage/tokens";
-import { addCorsHeaders, corsPreflightResponse } from "../_shared/auth";
+import {
+  addCorsHeaders,
+  corsPreflightResponse,
+  extractClientIp,
+} from "../_shared/auth";
 
 /**
  * Extract API key from Authorization header
@@ -25,25 +29,17 @@ function extractApiKey(request: NextRequest): string | null {
 }
 
 /**
- * Get client IP from request headers
- */
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-/**
  * Authenticate request using either session cookie or API key.
  *
  * @param request - The incoming Next.js request
  * @returns Validation result with isAdmin flag and error message if invalid
  */
-async function authenticateRequest(
-  request: NextRequest,
-): Promise<{ valid: boolean; isAdmin: boolean; keyName?: string; error?: string }> {
+async function authenticateRequest(request: NextRequest): Promise<{
+  valid: boolean;
+  isAdmin: boolean;
+  keyName?: string;
+  error?: string;
+}> {
   // First, try session authentication (for dashboard)
   const sessionValidation = await validateAdminSession(request);
   if (sessionValidation.valid) {
@@ -56,7 +52,7 @@ async function authenticateRequest(
     return { valid: false, isAdmin: false, error: "Missing authentication" };
   }
 
-  const clientIp = getClientIp(request);
+  const clientIp = extractClientIp(request);
   const validationResult = await validateApiKey(
     apiKey,
     clientIp,

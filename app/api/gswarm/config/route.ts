@@ -8,13 +8,17 @@
 
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { validateAdminSession } from "@/lib/admin-session";
 import { safeParseBody } from "@/lib/api-validation";
 import { PREFIX, consoleError } from "@/lib/console";
-import { validateAdminSession } from "@/lib/admin-session";
 import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 import { loadConfig, updateConfig } from "@/lib/gswarm/storage/config";
 import type { GSwarmConfig } from "@/lib/gswarm/types";
-import { addCorsHeaders, corsPreflightResponse } from "../_shared/auth";
+import {
+  addCorsHeaders,
+  corsPreflightResponse,
+  extractClientIp,
+} from "../_shared/auth";
 
 /**
  * Extract API key from Authorization header
@@ -25,17 +29,6 @@ function extractApiKey(request: NextRequest): string | null {
     return null;
   }
   return authHeader.slice(7);
-}
-
-/**
- * Get client IP from request headers
- */
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  );
 }
 
 /**
@@ -60,7 +53,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const clientIp = getClientIp(request);
+    const clientIp = extractClientIp(request);
     const validationResult = await validateApiKey(
       apiKey,
       clientIp,

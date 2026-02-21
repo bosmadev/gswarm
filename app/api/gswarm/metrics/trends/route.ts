@@ -15,7 +15,11 @@ import { PREFIX, consoleError } from "@/lib/console";
 import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 import { loadMetrics } from "@/lib/gswarm/storage/metrics";
 import { getEnabledProjects } from "@/lib/gswarm/storage/projects";
-import { addCorsHeaders, corsPreflightResponse } from "../../_shared/auth";
+import {
+  addCorsHeaders,
+  corsPreflightResponse,
+  extractClientIp,
+} from "../../_shared/auth";
 
 type MetricType = "requests" | "errors" | "latency" | "quota";
 type TrendDirection = "increasing" | "decreasing" | "stable";
@@ -40,17 +44,6 @@ function extractApiKey(request: NextRequest): string | null {
 }
 
 /**
- * Get client IP from request headers
- */
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-/**
  * Authenticate request using either session cookie or API key.
  */
 async function authenticateTrendsRequest(
@@ -66,7 +59,7 @@ async function authenticateTrendsRequest(
     return { valid: false, error: "Missing authentication" };
   }
 
-  const clientIp = getClientIp(request);
+  const clientIp = extractClientIp(request);
   return validateApiKey(apiKey, clientIp, "/api/gswarm/metrics/trends");
 }
 

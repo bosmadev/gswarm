@@ -17,7 +17,11 @@ import {
   predictQuotaExhaustion,
 } from "@/lib/gswarm/storage/metrics";
 import { getEnabledProjects } from "@/lib/gswarm/storage/projects";
-import { addCorsHeaders, corsPreflightResponse } from "../_shared/auth";
+import {
+  addCorsHeaders,
+  corsPreflightResponse,
+  extractClientIp,
+} from "../_shared/auth";
 
 /**
  * Extract API key from Authorization header
@@ -28,17 +32,6 @@ function extractApiKey(request: NextRequest): string | null {
     return null;
   }
   return authHeader.slice(7);
-}
-
-/**
- * Get client IP from request headers
- */
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  );
 }
 
 /**
@@ -62,7 +55,7 @@ async function authenticateRequest(
     return { valid: false, error: "Missing authentication" };
   }
 
-  const clientIp = getClientIp(request);
+  const clientIp = extractClientIp(request);
   const validationResult = await validateApiKey(
     apiKey,
     clientIp,
