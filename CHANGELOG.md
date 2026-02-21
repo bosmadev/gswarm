@@ -3,6 +3,18 @@
 
 ---
 
+## [![v1.0.5](https://img.shields.io/badge/v1.0.5-2026--02--21-333333.svg)](https://github.com/bosmadev/gswarm/commit/2b115797b88523d94569776dd1b76214ffad9773) | Build 11
+
+config: sync workflow files from source-of-truth
+
+- [x] Updated claude.yml model from sonnet-4-5 to sonnet-4-6
+- [x] Added Resolution Table prompt to code review action
+- [x] Enhanced Summarize PR prompt with structured template
+- [x] Upgraded changelog.ts with auto-assign Build ID and multi-commit support
+
+
+---
+
 ## [![v1.0.4](https://img.shields.io/badge/v1.0.4-2026--02--17-333333.svg)](https://github.com/bosmadev/gswarm/commit/2d9e72ac65d9e0328ee92b81232cefb85b655ea0) | Build 10
 
 fix(ci): inline Python one-liner to fix YAML parse error
