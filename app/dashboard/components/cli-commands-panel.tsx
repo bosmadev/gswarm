@@ -623,6 +623,7 @@ export function CLICommandsPanel({
           >
             <div
               className="p-4 font-mono text-sm"
+              role="log"
               aria-live="polite"
               aria-label="Terminal output"
               aria-relevant="additions"

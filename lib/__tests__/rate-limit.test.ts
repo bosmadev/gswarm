@@ -3,7 +3,7 @@
  * @description Tests for RateLimiter sliding window implementation
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { RateLimiter } from "@/lib/rate-limit";
 
 describe("RateLimiter", () => {

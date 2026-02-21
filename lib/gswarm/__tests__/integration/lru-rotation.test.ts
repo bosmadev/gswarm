@@ -37,8 +37,7 @@ const EXPECTED_ACCOUNTS = [
   "bosmadev3@gmail.com",
 ];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const LRUProjectSelector: any = undefined;
+const LRUProjectSelector: unknown = undefined;
 
 describe.skip("LRU Project Rotation Integration", () => {
   let tokens: Map<string, TokenFile>;
