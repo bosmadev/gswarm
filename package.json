@@ -2,7 +2,7 @@
   "name": "gswarm",
   "displayName": "GSwarm",
   "description": "Gemini Swarm API Proxy",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publisher": "bosmadev",
   "private": true,
   "repository": {
