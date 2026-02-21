@@ -687,21 +687,21 @@ function startAnimation(): void {
 
     // Move to top header line (line 1) and update
     process.stdout.write("\x1b[1;1H\x1b[2K");
-    process.stdout.write(prerenderedHeaderFrames[currentAnimationFrame]);
+    process.stdout.write(prerenderedHeaderFrames[currentAnimationFrame] ?? "");
 
     // Move to title line (line 2) and update with animated name
     process.stdout.write("\x1b[2;1H\x1b[2K");
     process.stdout.write(
-      `  ${prerenderedNameFrames[currentAnimationFrame]} (${orangeVersion}) ${DIM}|${RESET} ${DESCRIPTION}`,
+      `  ${prerenderedNameFrames[currentAnimationFrame] ?? ""} (${orangeVersion}) ${DIM}|${RESET} ${DESCRIPTION}`,
     );
 
     // Move to bottom header line (line 3) and update
     process.stdout.write("\x1b[3;1H\x1b[2K");
-    process.stdout.write(prerenderedHeaderFrames[currentAnimationFrame]);
+    process.stdout.write(prerenderedHeaderFrames[currentAnimationFrame] ?? "");
 
     // Move to footer line and update
     process.stdout.write(`\x1b[${menuLineCount};1H\x1b[2K`);
-    process.stdout.write(prerenderedFrames[currentAnimationFrame]);
+    process.stdout.write(prerenderedFrames[currentAnimationFrame] ?? "");
 
     // Restore cursor position
     process.stdout.write("\x1b[u");
@@ -856,7 +856,7 @@ async function killBlockingProcesses(): Promise<void> {
       for (const line of lines) {
         const match = line.match(/"node\.exe","(\d+)"/);
         if (match) {
-          const pid = Number.parseInt(match[1], 10);
+          const pid = Number.parseInt(match[1]!, 10);
           if (pid === currentPid) continue;
           try {
             // Check if this node process is running next/pnpm
@@ -887,7 +887,7 @@ async function killBlockingProcesses(): Promise<void> {
       const portLines = netstatOutput.trim().split("\n").filter(Boolean);
       for (const line of portLines) {
         const parts = line.trim().split(/\s+/);
-        const pid = Number.parseInt(parts[parts.length - 1], 10);
+        const pid = Number.parseInt(parts[parts.length - 1] ?? "", 10);
         if (pid && pid !== currentPid) {
           try {
             execSync(`taskkill /F /PID ${pid} 2>NUL`);
@@ -1563,7 +1563,7 @@ async function daemonStart(): Promise<void> {
   // Start in background (--experimental-transform-types for Node native TS)
   const child = spawn(
     "node",
-    ["--experimental-transform-types", process.argv[1], "foreground"],
+    ["--experimental-transform-types", process.argv[1] ?? __filename, "foreground"],
     {
       detached: true,
       stdio: "ignore",

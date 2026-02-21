@@ -99,7 +99,7 @@ function printTestPlan() {
   console.log("Test Plan:\n");
 
   for (let i = 0; i < TEST_SUITES.length; i++) {
-    const suite = TEST_SUITES[i];
+    const suite = TEST_SUITES[i]!;
     console.log(`  ${i + 1}. ${suite.name} (${suite.duration})`);
     console.log(`     ${suite.description}`);
   }
@@ -153,10 +153,10 @@ async function main() {
     }
 
     case "run": {
-      const testIndex = Number.parseInt(args[1], 10);
+      const testIndex = Number.parseInt(args[1] ?? "", 10);
 
       if (testIndex >= 1 && testIndex <= TEST_SUITES.length) {
-        const suite = TEST_SUITES[testIndex - 1];
+        const suite = TEST_SUITES[testIndex - 1]!;
         console.log(`Running: ${suite.name}\n`);
         const exitCode = await runTests(suite.file);
         process.exit(exitCode);

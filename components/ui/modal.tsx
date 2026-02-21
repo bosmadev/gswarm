@@ -94,9 +94,10 @@ export function Modal({
   // Move focus into modal when it opens
   React.useEffect(() => {
     if (isOpen && modalRef.current) {
-      const focusable = modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
+      const focusable =
+        modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
       if (focusable.length > 0) {
-        focusable[0].focus();
+        focusable[0]!.focus();
       } else {
         modalRef.current.focus();
       }
@@ -115,7 +116,7 @@ export function Modal({
 
       if (e.key === "Tab") {
         const focusable = Array.from(
-          modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS)
+          modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS),
         ).filter((el) => !el.closest('[tabindex="-1"]') || el.tabIndex >= 0);
 
         if (focusable.length === 0) {
@@ -123,8 +124,8 @@ export function Modal({
           return;
         }
 
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
+        const first = focusable[0]!;
+        const last = focusable[focusable.length - 1]!;
 
         if (e.shiftKey) {
           if (document.activeElement === first) {

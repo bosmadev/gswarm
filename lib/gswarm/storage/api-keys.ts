@@ -394,7 +394,7 @@ export async function checkRateLimit(
 
     return {
       success: true,
-      data: { remaining, resetTime },
+      data: { remaining: remaining ?? 0, resetTime },
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

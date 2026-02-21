@@ -72,7 +72,11 @@ function evictExpiredMetrics(): void {
 if (typeof setInterval !== "undefined") {
   const interval = setInterval(evictExpiredMetrics, 5 * 60 * 1000);
   // Allow process to exit without being held by this timer
-  if (typeof interval === "object" && interval !== null && "unref" in interval) {
+  if (
+    typeof interval === "object" &&
+    interval !== null &&
+    "unref" in interval
+  ) {
     (interval as NodeJS.Timeout).unref();
   }
 }
@@ -186,7 +190,7 @@ export function updateAggregated(
       error_types: {},
     };
   }
-  const accountStats = agg.by_account[metric.account_id];
+  const accountStats = agg.by_account[metric.account_id]!;
   accountStats.total++;
   accountStats.total_duration_ms += metric.duration_ms;
   if (metric.status === "success") {
@@ -212,7 +216,7 @@ export function updateAggregated(
       tokens_used: 0,
     };
   }
-  const projectStats = agg.by_project[metric.project_id];
+  const projectStats = agg.by_project[metric.project_id]!;
   projectStats.total++;
   projectStats.total_duration_ms += metric.duration_ms;
   if (metric.status === "success") {

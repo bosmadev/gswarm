@@ -169,7 +169,11 @@ function evictExpiredErrors(): void {
 if (typeof setInterval !== "undefined") {
   const interval = setInterval(evictExpiredErrors, 5 * 60 * 1000);
   // Allow process to exit without being held by this timer
-  if (typeof interval === "object" && interval !== null && "unref" in interval) {
+  if (
+    typeof interval === "object" &&
+    interval !== null &&
+    "unref" in interval
+  ) {
     (interval as NodeJS.Timeout).unref();
   }
 }
@@ -504,7 +508,7 @@ export async function clearAllErrors(): Promise<StorageResult<number>> {
         for (const key of keys) {
           const dateMatch = key.match(/^errors:(\d{4}-\d{2}-\d{2})$/);
           if (dateMatch) {
-            errorsCacheByDate.delete(dateMatch[1]);
+            errorsCacheByDate.delete(dateMatch[1]!);
           }
         }
       }

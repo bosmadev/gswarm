@@ -78,9 +78,10 @@ function computeTrend(values: number[]): TrendDirection {
   let sumX2 = 0;
 
   for (let i = 0; i < n; i++) {
+    const v = values[i] ?? 0;
     sumX += i;
-    sumY += values[i];
-    sumXY += i * values[i];
+    sumY += v;
+    sumXY += i * v;
     sumX2 += i * i;
   }
 
@@ -174,7 +175,7 @@ export async function GET(request: NextRequest) {
     const values: number[] = [];
 
     for (let i = 0; i < dates.length; i++) {
-      const result = results[i];
+      const result = results[i]!;
       let value = 0;
 
       if (result.status === "fulfilled" && result.value.success) {
@@ -201,7 +202,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      dataPoints.push({ date: dates[i], value });
+      dataPoints.push({ date: dates[i]!, value });
       values.push(value);
     }
 
@@ -213,7 +214,7 @@ export async function GET(request: NextRequest) {
 
     // Percent change: first non-zero day vs last day
     const firstValue = values.find((v) => v > 0) ?? 0;
-    const lastValue = values[values.length - 1];
+    const lastValue = values[values.length - 1] ?? 0;
     const percentChange =
       firstValue > 0
         ? Math.round(((lastValue - firstValue) / firstValue) * 1000) / 10

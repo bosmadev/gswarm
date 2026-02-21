@@ -64,7 +64,7 @@ interface NavigationItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   href: string;
-  shortcut: string;
+  shortcut?: string;
   keywords?: string[];
 }
 
@@ -255,7 +255,7 @@ function CommandPalette({
       if (gKeyPressed) {
         const key = e.key.toLowerCase();
         const item = navigationItems.find(
-          (nav) => nav.shortcut.toLowerCase() === `g ${key}`,
+          (nav) => nav.shortcut?.toLowerCase() === `g ${key}`,
         );
 
         if (item) {

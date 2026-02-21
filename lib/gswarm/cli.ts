@@ -365,7 +365,7 @@ async function authenticateAccount(
     // Test API access with first project
     if (projects.length > 0) {
       consoleLog(PREFIX.GSWARM, "Testing API access...");
-      const testResult = await testApiAccess(tokenData, projects[0]);
+      const testResult = await testApiAccess(tokenData, projects[0]!);
 
       if (!testResult.success && testResult.validationUrl) {
         consoleLog(PREFIX.GSWARM, "");
@@ -757,7 +757,7 @@ async function authBatch(emails: string[]): Promise<void> {
   let failCount = 0;
 
   for (let i = 0; i < emails.length; i++) {
-    const email = emails[i].trim();
+    const email = emails[i]!.trim();
     consoleLog(
       PREFIX.GSWARM,
       `\n${BOLD}[${i + 1}/${emails.length}] Processing ${email}...${RESET}`,
@@ -838,7 +838,7 @@ async function authVerify(email: string): Promise<void> {
   consoleLog(PREFIX.GSWARM, `Projects: ${token.projects.length}`);
   consoleLog(PREFIX.GSWARM, "");
 
-  const testResult = await testApiAccess(currentToken, token.projects[0]);
+  const testResult = await testApiAccess(currentToken, token.projects[0]!);
 
   if (testResult.success) {
     consoleLog(PREFIX.GSWARM, `${GREEN}${BOLD}✓ API Access Verified${RESET}`);
@@ -1097,7 +1097,7 @@ async function interactiveDashboard(): Promise<void> {
           for (let i = 0; i < status.accounts.length; i++) {
             consoleLog(
               PREFIX.GSWARM,
-              `  [${i + 1}] ${status.accounts[i].email}`,
+              `  [${i + 1}] ${status.accounts[i]!.email}`,
             );
           }
           const idx =
@@ -1107,7 +1107,7 @@ async function interactiveDashboard(): Promise<void> {
             ) - 1;
 
           if (idx >= 0 && idx < status.accounts.length) {
-            const email = status.accounts[idx].email;
+            const email = status.accounts[idx]!.email;
             const confirm = await prompt(rl, `Remove ${email}? (y/n): `);
             if (confirm.toLowerCase() === "y") {
               const success = await removeAccount(email);
@@ -1328,7 +1328,7 @@ async function main(): Promise<void> {
             break;
 
           case "verify":
-            await authVerify(arg1);
+            await authVerify(arg1 ?? "");
             break;
 
           case "list":
@@ -1336,7 +1336,7 @@ async function main(): Promise<void> {
             break;
 
           case "test":
-            await authTest(arg1);
+            await authTest(arg1 ?? "");
             break;
 
           default:

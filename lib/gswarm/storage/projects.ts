@@ -127,7 +127,7 @@ export async function loadProjectStatuses(): Promise<
 
         if (results) {
           for (let i = 0; i < results.length; i++) {
-            const [err, hash] = results[i];
+            const [err, hash] = results[i]!;
             if (!err && hash) {
               const status = hashToStatus(hash as Record<string, string>);
               if (status) {

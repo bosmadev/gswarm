@@ -193,7 +193,7 @@ export async function selectProject(): Promise<GcpProjectSelectionResult | null>
   // Sort by health score (highest first)
   projectsWithHealth.sort((a, b) => b.healthScore - a.healthScore);
 
-  const best = projectsWithHealth[0];
+  const best = projectsWithHealth[0]!;
 
   consoleDebug(
     PREFIX.DEBUG,

@@ -65,18 +65,18 @@ export function parseJsonError(errorBody: string): ParsedJsonError | null {
     // Parse retry delay from message (e.g., "retry after 60s")
     const retryMatch = message.match(/retry\s+after\s+(\d+)\s*s/i);
     if (retryMatch) {
-      result.retryDelay = Number.parseInt(retryMatch[1], 10) * 1000;
+      result.retryDelay = Number.parseInt(retryMatch[1]!, 10) * 1000;
     }
 
     // Parse quota information
     const quotaLimitMatch = message.match(/quota[:\s]+(\d+)/i);
     if (quotaLimitMatch) {
-      result.quotaLimit = Number.parseInt(quotaLimitMatch[1], 10);
+      result.quotaLimit = Number.parseInt(quotaLimitMatch[1]!, 10);
     }
 
     const quotaValueMatch = message.match(/used[:\s]+(\d+)/i);
     if (quotaValueMatch) {
-      result.quotaValue = Number.parseInt(quotaValueMatch[1], 10);
+      result.quotaValue = Number.parseInt(quotaValueMatch[1]!, 10);
     }
 
     return Object.keys(result).length > 0 ? result : null;

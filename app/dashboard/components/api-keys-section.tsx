@@ -90,7 +90,7 @@ function validateIPList(ips: string): string | undefined {
     if (!IP_V4_PATTERN.test(ip)) {
       return `Invalid IP address: ${ip}`;
     }
-    const octets = ip.split("/")[0].split(".");
+    const octets = (ip.split("/")[0] ?? ip).split(".");
     if (octets.some((o) => Number(o) > 255)) {
       return `Invalid IP address: ${ip}`;
     }
@@ -116,8 +116,8 @@ function formatDate(dateString: string | undefined): string {
 
 function formatIPs(ips: string[] | undefined): string {
   if (!ips || ips.length === 0) return "All IPs";
-  if (ips.length === 1) return ips[0];
-  return `${ips[0]} +${ips.length - 1} more`;
+  if (ips.length === 1) return ips[0]!;
+  return `${ips[0]!} +${ips.length - 1} more`;
 }
 
 export interface APIKeysSectionProps {

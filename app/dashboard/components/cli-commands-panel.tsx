@@ -474,7 +474,7 @@ export function CLICommandsPanel({
       setProjects(fetched);
       // Auto-select if only one project
       if (fetched.length === 1) {
-        setInputValue(fetched[0].id);
+        setInputValue(fetched[0]!.id);
       }
     } catch (err) {
       setProjectsError(

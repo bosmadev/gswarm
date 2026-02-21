@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
   // Get date range from query params (default: today only)
   const { searchParams } = new URL(request.url);
   const startDate =
-    searchParams.get("startDate") || new Date().toISOString().split("T")[0];
+    searchParams.get("startDate") || new Date().toISOString().slice(0, 10);
   const endDate = searchParams.get("endDate") || startDate;
 
   try {
@@ -120,7 +120,7 @@ export async function GET(request: NextRequest) {
     if (projects.length > 0) {
       // projects is string[] (project IDs)
       const predictionResult = await predictQuotaExhaustion(
-        projects[0],
+        projects[0]!,
         1500, // Assume 1500 daily quota per project
       );
       if (predictionResult.success) {
@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
 
     // Calculate usage rate (requests per hour)
     const now = new Date();
-    const startOfDay = new Date(now.toISOString().split("T")[0]);
+    const startOfDay = new Date(now.toISOString().slice(0, 10));
     const hoursElapsed = Math.max(
       1,
       (now.getTime() - startOfDay.getTime()) / (1000 * 60 * 60),

@@ -390,8 +390,8 @@ function extractHeadings(content: string): TocItem[] {
   const headings: TocItem[] = [];
 
   for (const match of content.matchAll(headingRegex)) {
-    const level = match[1].length;
-    const text = match[2]
+    const level = match[1]!.length;
+    const text = match[2]!
       .replace(/\*\*/g, "")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
       .replace(/`([^`]+)`/g, "$1")
@@ -656,7 +656,7 @@ const markdownComponents: Components = {
   li: ({ children }) => <li className="leading-relaxed pl-1">{children}</li>,
   code: ({ className, children }) => {
     const match = /language-(\w+)/.exec(className || "");
-    const language = match ? match[1] : "";
+    const language = match ? (match[1] ?? "") : "";
     const codeContent = String(children).replace(/\n$/, "");
 
     if (language === "mermaid") {
