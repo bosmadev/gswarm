@@ -474,7 +474,7 @@ export function CLICommandsPanel({
       setProjects(fetched);
       // Auto-select if only one project
       if (fetched.length === 1) {
-        setInputValue(fetched[0]!.id);
+        setInputValue(fetched[0]?.id ?? "");
       }
     } catch (err) {
       setProjectsError(
@@ -624,7 +624,6 @@ export function CLICommandsPanel({
             <div
               className="p-4 font-mono text-sm"
               role="log"
-              aria-live="polite"
               aria-label="Terminal output"
               aria-relevant="additions"
             >

@@ -50,6 +50,7 @@ function makeRequest(
 describe("authenticateRequest", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.resetModules();
   });
 
   it("returns success: false with missingApiKey when no authorization header", async () => {
@@ -139,6 +140,7 @@ describe("authenticateRequest", () => {
 describe("validateAdminSession", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.resetModules();
   });
 
   it("returns valid: false when no session cookie", async () => {

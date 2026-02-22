@@ -22,7 +22,12 @@ vi.mock("@/lib/gswarm/url-builder", () => ({
 
 vi.mock("@/lib/utils", () => ({
   escapeHtml: (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#x27;"),
 }));
 
 vi.mock("@/lib/console", () => ({

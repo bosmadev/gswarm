@@ -128,13 +128,12 @@ export default function LoginPage() {
           >
             {/* Error Message */}
             {error && (
-              <div
-                className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm"
-                role="alert"
+              <output
+                className="block p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm"
                 aria-live="polite"
               >
                 {error}
-              </div>
+              </output>
             )}
 
             {/* Username Field */}

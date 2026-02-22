@@ -51,9 +51,12 @@ function cleanupExpiredStates(): void {
   }
 }
 
-// Run cleanup every minute
+// Run cleanup every minute (unref prevents keeping Node process alive)
 if (typeof setInterval !== "undefined") {
-  setInterval(cleanupExpiredStates, 60 * 1000);
+  const cleanupTimer = setInterval(cleanupExpiredStates, 60 * 1000);
+  if (typeof cleanupTimer === "object" && "unref" in cleanupTimer) {
+    cleanupTimer.unref();
+  }
 }
 
 // =============================================================================

@@ -258,15 +258,24 @@ function ProjectRow({
   const isTesting = isTestingId === project.id;
   const isToggling = isTogglingId === project.id;
   const [testResult, setTestResult] = React.useState<TestResult>("idle");
+  const testTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up timer on unmount to prevent state updates on unmounted component
+  React.useEffect(() => {
+    return () => {
+      if (testTimerRef.current) clearTimeout(testTimerRef.current);
+    };
+  }, []);
 
   const isEnabled = project.status !== "disabled";
 
   const handleTest = async () => {
+    if (testTimerRef.current) clearTimeout(testTimerRef.current);
     setTestResult("idle");
     const success = await onTest(project.id);
     setTestResult(success ? "success" : "error");
     // Reset the result icon after 3 seconds
-    setTimeout(() => setTestResult("idle"), 3000);
+    testTimerRef.current = setTimeout(() => setTestResult("idle"), 3000);
   };
 
   const handleToggle = () => {
@@ -500,9 +509,13 @@ function EmptyState() {
 
 export function ProjectsTable() {
   const [search, setSearch] = React.useState("");
-  // Debounce search: useDeferredValue defers the value used in the API key
-  // by one React render cycle, batching rapid keystrokes into a single fetch
-  const deferredSearch = React.useDeferredValue(search);
+  // Time-based debounce: delays search by 300ms after last keystroke,
+  // preventing a network fetch on every keypress
+  const [deferredSearch, setDeferredSearch] = React.useState("");
+  React.useEffect(() => {
+    const timer = setTimeout(() => setDeferredSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [accountFilter, setAccountFilter] = React.useState("all");
   const [sortField, setSortField] = React.useState<SortField>("lastUsed");
   const [sortDirection, setSortDirection] =
@@ -637,6 +650,7 @@ export function ProjectsTable() {
               size="icon"
               onClick={handleRefresh}
               disabled={isLoading}
+              aria-label="Refresh projects"
             >
               <RefreshCw
                 className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}

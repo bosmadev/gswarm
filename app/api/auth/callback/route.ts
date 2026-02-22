@@ -7,6 +7,7 @@
  * Based on pulsona's performBrowserLogin flow, adapted for web popup.
  */
 
+import { randomBytes } from "node:crypto";
 import { type NextRequest, NextResponse } from "next/server";
 import { PREFIX, consoleError, consoleLog } from "@/lib/console";
 import {
@@ -36,6 +37,8 @@ function popupResponse(success: boolean, message: string): NextResponse {
     /<\/script>/gi,
     "<\\/script>",
   );
+  // Per-response nonce for CSP — eliminates need for 'unsafe-inline' on this page
+  const nonce = randomBytes(16).toString("base64");
   return new NextResponse(
     `<!DOCTYPE html>
 <html>
@@ -44,7 +47,7 @@ function popupResponse(success: boolean, message: string): NextResponse {
   <h2>${safeHeading}</h2>
   <p>${safeMessage}</p>
   <p style="color: #71717a; font-size: 0.875rem;">This window will close automatically...</p>
-  <script>
+  <script nonce="${nonce}">
     if (window.opener) {
       window.opener.postMessage(${payload}, window.location.origin);
     }
@@ -54,7 +57,10 @@ function popupResponse(success: boolean, message: string): NextResponse {
 </html>`,
     {
       status: success ? 200 : 400,
-      headers: { "Content-Type": "text/html" },
+      headers: {
+        "Content-Type": "text/html",
+        "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'`,
+      },
     },
   );
 }

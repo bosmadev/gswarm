@@ -277,10 +277,15 @@ export function streamingResponseFromStream(
         };
         controller.enqueue(encoder.encode(formatSSE(initialChunk)));
 
-        // Forward upstream chunks as they arrive
+        // Forward upstream chunks as they arrive (with backpressure awareness)
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+
+          // Respect downstream backpressure: if consumer is slow, wait before enqueuing more
+          if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          }
 
           const text = decoder.decode(value, { stream: true });
           if (!text) continue;
@@ -336,6 +341,7 @@ export function streamingResponseFromStream(
         };
         controller.enqueue(encoder.encode(formatSSE(finalChunk)));
         controller.enqueue(encoder.encode(formatDone()));
+        reader.releaseLock();
         controller.close();
       } catch (error) {
         reader.releaseLock();

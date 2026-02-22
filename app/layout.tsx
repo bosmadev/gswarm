@@ -32,7 +32,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: process.env.GLOBAL_APP_DISPLAY_NAME || "GSwarm",
-  description: process.env.GLOBAL_APP_DESCRIPTION,
+  description: process.env.GLOBAL_APP_DESCRIPTION || "Gemini Swarm API Proxy",
 };
 
 export default function RootLayout({
