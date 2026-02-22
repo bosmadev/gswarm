@@ -17,19 +17,130 @@ fix(ci): rebuild CHANGELOG  + fix stale Build ID collision
 
 ## [![v1.0.7](https://img.shields.io/badge/v1.0.7-2026--02--22-333333.svg)](https://github.com/bosmadev/gswarm/pull/2) | Build 13
 
-Security fixes, storage features, accessibility fixes, performance fixes, CI/CD fixes, code quality updates, and documentation.
+Security fixes, storage features, accessibility fixes, performance fixes, CI/CD fixes, code quality updates, 1 maintenance task, and 1 documentation update.
 
+### Added
+- [x] [`4258f57`](https://github.com/bosmadev/gswarm/commit/4258f57) feat: add CLAUDE.md, metrics API routes, debug mode, cleanup unused code
+- [x] [`33d1cb2`](https://github.com/bosmadev/gswarm/commit/33d1cb2) feat: rewrite README with ANSI art + throughput stats, remove DASHBOARD_USERS
+- [x] [`4a82ffe`](https://github.com/bosmadev/gswarm/commit/4a82ffe) feat(storage): migrate to Redis + fix P1 review findings
+- [x] [`f94aec8`](https://github.com/bosmadev/gswarm/commit/f94aec8) feat(storage): migrate api-keys.ts to Redis with atomic rate limiting
+### Fixed
+- [x] [`44b75e2`](https://github.com/bosmadev/gswarm/commit/44b75e2) fix(review): resolve final 5 review findings (250/250)
+- [x] [`484a151`](https://github.com/bosmadev/gswarm/commit/484a151) fix(p2+p3): resolve all remaining review findings
+- [x] [`d564ccf`](https://github.com/bosmadev/gswarm/commit/d564ccf) fix(security): verify-fix refinements from post-implementation review
+- [x] [`f859fb5`](https://github.com/bosmadev/gswarm/commit/f859fb5) fix(ts): resolve noUncheckedIndexedAccess errors across 20 files
+- [x] [`93b7255`](https://github.com/bosmadev/gswarm/commit/93b7255) fix(lint): resolve biome warnings and knip issues
+- [x] [`1c0f148`](https://github.com/bosmadev/gswarm/commit/1c0f148) fix(test): update admin login mock from getClientIp to extractClientIp
+- [x] [`2ef568c`](https://github.com/bosmadev/gswarm/commit/2ef568c) fix(symbols): replace duplicate getClientIp with extractClientIp from shared auth
+- [x] [`09de09b`](https://github.com/bosmadev/gswarm/commit/09de09b) fix(security+a11y+perf): address 250 @claude review findings on PR #2
+- [x] [`7681495`](https://github.com/bosmadev/gswarm/commit/7681495) fix(ci): inline Python one-liner to fix YAML parse error
+- [x] [`099075c`](https://github.com/bosmadev/gswarm/commit/099075c) fix(ci): add OIDC + issues/PR perms to claude job
+- [x] [`34b7765`](https://github.com/bosmadev/gswarm/commit/34b7765) fix(ci): conditional track_progress for labeled event compat
+- [x] [`5017f94`](https://github.com/bosmadev/gswarm/commit/5017f94) fix(ci): correct context7 MCP package to @upstash/context7-mcp
+- [x] [`f31bc77`](https://github.com/bosmadev/gswarm/commit/f31bc77) fix(ci): remove Node.js cache from claude job, no project deps needed
+- [x] [`0f7b507`](https://github.com/bosmadev/gswarm/commit/0f7b507) fix(ci): auto-detect pnpm/npm for Node.js cache in claude.yml
+- [x] [`56a09e7`](https://github.com/bosmadev/gswarm/commit/56a09e7) fix: exclude integration tests from default vitest run, clean unused imports
+- [x] [`21fbf0a`](https://github.com/bosmadev/gswarm/commit/21fbf0a) fix: encrypt REDIS_URL, remove husky, fix lint errors
+### Changed
+- [x] [`727ec84`](https://github.com/bosmadev/gswarm/commit/727ec84) config(ci): add PR body auto-update job to claude.yml
+- [x] [`2d6056d`](https://github.com/bosmadev/gswarm/commit/2d6056d) config: sync PR template from source-of-truth
+- [x] [`e4291a1`](https://github.com/bosmadev/gswarm/commit/e4291a1) config: sync workflow files from source-of-truth
+- [x] [`60b0972`](https://github.com/bosmadev/gswarm/commit/60b0972) ci: add clone config step to claude.yml, remove repo CLAUDE.md
+### Updated
+- [x] [`4c1a68b`](https://github.com/bosmadev/gswarm/commit/4c1a68b) docs: consolidate GSwarm documentation in README
+### Details
+- [x] Add update-pr-body job triggered on synchronize events
+- [x] Lightweight Python-only job (no Claude API costs)
+- [x] Complements /commit hook for non-local push sources
+- [x] Remove unsafe-eval from CSP (only needed in dev, not production)
+- [x] Bump coverage branch threshold 40% → 50% (matches other thresholds)
+- [x] Add Promise coalescing to stats/route.ts (prevents thundering herd)
+- [x] Refactor TTL test to vi.useFakeTimers() (deterministic, no real delay)
+- [x] Add .env.example documenting all environment variables
+- [x] Add CSP nonce to OAuth popup script (eliminates unsafe-inline)
+- [x] Add reader.releaseLock() on happy path in streaming.ts
+- [x] Add backpressure check via controller.desiredSize in streaming
+- [x] Replace useDeferredValue with 300ms setTimeout debounce
+- [x] Fix focus trap filter logic (|| → && for tabindex check)
+- [x] Fix role/aria-live conflict (use &lt;output&gt; element)
+- [x] Add vi.resetModules() to auth test beforeEach blocks
+- [x] Complete escapeHtml mock with quote escaping
+- [x] Add HSTS preload directive
+- [x] Add aria-label to refresh button
+- [x] Add metadata.description fallback in layout.tsx
+- [x] Use React.useId() for modal IDs (multi-instance safe)
+- [x] Add motion-reduce:animate-none to modal animation
+- [x] Clean up setTimeout in ProjectRow on unmount
+- [x] Add .unref() to stateStore cleanup interval
+- [x] Remove redundant aria-live on role="log" element
+- [x] Fix non-null assertions to optional chaining (biome)
+- [x] Keep dev branch fixes, adopt main's version bump (1.0.4 → 1.0.6)
+- [x] Escape &lt;/script&gt; in OAuth popup JSON payload to prevent XSS
+- [x] Clear OAuth state cookie on all error paths
+- [x] Additional test coverage for auth callback and completions
+- [x] Formatting fixes from biome linting
+- [x] Updated claude.yml model from sonnet-4-5 to sonnet-4-6
+- [x] Added Resolution Table prompt to code review action
+- [x] Upgraded changelog.ts with auto-assign Build ID
+- [x] Add role="log" to terminal output div in cli-commands-panel (aria-label now valid)
+- [x] Remove unused vi import from rate-limit.test.ts
+- [x] Fix LRUProjectSelector any→unknown in integration test stub
+- [x] Add @vitest/coverage-v8 dev dependency for coverage config support
+- [x] Add streaming.ts to knip ignore (intentional future-use API utilities)
 - [x] Security: XSS escaping in OAuth callbacks, CSRF state validation, admin session checks, input validation limits, model allowlist, role-prefix stripping
 - [x] Auth: remove dev bypass, atomic session writes, TRUSTED_PROXY validation, deduplicate getClientIp, rename conflicting validateAdminSession
 - [x] OAuth: move CLIENT_SECRET to env var, redirectUri allowlist, required state parameter
 - [x] A11y: modal focus trap, aria-live regions, icon button labels, main landmark, prefers-reduced-motion, aria-sort on tables
 - [x] Perf: extract CountdownTimer component, search debounce, metrics caching, stats in-memory cache
 - [x] Architecture: ensureInitialized() race condition fix, cache stampede prevention, true streaming support
-- [x] Storage: migrate to Redis (api-keys + rate limiting), atomic Lua-based rate limits, SIGTERM shutdown handlers
 - [x] Config: security headers (CSP, HSTS, X-Frame-Options), noUncheckedIndexedAccess, engines field, dotenvx to deps
-- [x] Tests: 50 new tests across 7 files, coverage config with branch/line thresholds
+- [x] Tests: 50 new tests across 7 files, coverage config added
 - [x] Utils: escapeHtml(), useRef refactor, navItems dedup, namespace removal, Map cleanup
-- [x] CI: clone bosmadev/claude for full agent context, add PR body auto-update job, sync workflow files
+- [x] Clone bosmadev/claude to ~/.claude on runner for full agent/CLAUDE.md context
+- [x] @claude review now gets same security criteria, agent configs, and scripts as local CLI
+- [x] Remove per-repo CLAUDE.md (redundant with cloned global config)
+- [x] Auto-add 'claude' label via /openpr to trigger @claude review on PRs
+- [x] Add repo-level CLAUDE.md with security review criteria for @claude and CI
+- [x] Add metrics export/trends and status stream API endpoints
+- [x] Add dev:debug script and --debug flag in launch.ts
+- [x] Remove API_ENDPOINTS.md (consolidated in README)
+- [x] Remove unused lru-selector functions (parseResetTime, markProjectCooldown, recordProjectError)
+- [x] Fix default port 3001 → 3000 across env-validator and cli.ts
+- [x] Re-encrypt GLOBAL_PORT with current keypair
+- [x] Add Architecture mermaid diagram with error handling flows
+- [x] Add LRU Project Rotation section with flowchart and ProjectStatus interface
+- [x] Expand Rate Limits and Quotas with per-minute/per-day Google Cloud quotas
+- [x] Add Cooldown and Error Handling with configuration table and health states
+- [x] Add Monitoring section with Redis keys and GSwarmMetrics interface
+- [x] Use Claude Code Orange theme for all mermaid charts
+- [x] Keep existing ANSI art, quick example, setup, supported models, stack
+- [x] Remove Pulsona-specific content (trading, news analysis)
+- [x] Complete README rewrite: ANSI logo, free inference pitch, throughput table
+- [x] Add standalone gist link and curl example
+- [x] Remove Azure deployment, scripts tables, contributor section (see CONTRIBUTING.md)
+- [x] Remove DASHBOARD_USERS from .env (managed via Redis, admin creds stay as fallback)
+- [x] Add **/integration/** to vitest exclude (requires local token files)
+- [x] Remove unused imports from integration test stubs
+- [x] Remove unused variables in lru-rotation test
+- [x] Encrypt plaintext REDIS_URL in .env via dotenvx (security fix)
+- [x] Remove husky entirely — Claude Code hook handles .env encryption check
+- [x] Remove unused imports: StorageResult (executor.ts), getValidTokens (lru-selector.ts)
+- [x] Fix switch fallthrough in run-integration-tests.ts (add break statements)
+- [x] Convert function declarations to arrow functions in reactgrab-patch.cjs
+- [x] Remove husky from devDependencies and prepare script
+- [x] Replace file-based storage with ioredis (Upstash Redis)
+- [x] Add JSON.parse safety wrappers in all storage modules
+- [x] Register SIGTERM/SIGINT shutdown handlers for Redis
+- [x] Export shutdownRedis from facade
+- [x] Fix knip: remove @types/ioredis, configure script entries
+- [x] Add biome overrides for standalone scripts and redis.ts
+- [x] Apply unsafe biome fixes to tests and codebase
+- [x] Fix Husky pre-commit shebang
+- [x] Replace file-based storage with Redis (gswarm:api-keys key)
+- [x] Implement atomic rate limiting using Lua script (INCR + EXPIRE)
+- [x] Remove in-memory rate limit map (Redis counters are atomic across processes)
+- [x] Simplify ApiKeysStore schema (no rate_limits field, auto-expires in Redis)
+- [x] Update facade.ts to remove clearApiKeysCache export (no cache needed)
 
 
 ---
