@@ -60,6 +60,9 @@ const sizeClasses: Record<"sm" | "md" | "lg" | "xl" | "full", string> = {
  * </Modal>
  * ```
  */
+const FOCUSABLE_SELECTORS =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Modal({
   isOpen,
   onClose,
@@ -72,21 +75,83 @@ export function Modal({
   footer,
   className,
 }: ModalProps) {
-  // Handle ESC key press
+  const modalRef = React.useRef<HTMLDivElement>(null);
+  const triggerRef = React.useRef<Element | null>(null);
+  const instanceId = React.useId();
+  const titleId = `modal-title-${instanceId}`;
+  const descId = `modal-desc-${instanceId}`;
+
+  // Capture the triggering element before modal opens
   React.useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
+    if (isOpen) {
+      triggerRef.current = document.activeElement;
+    } else {
+      // Restore focus to trigger when modal closes
+      if (triggerRef.current && triggerRef.current instanceof HTMLElement) {
+        triggerRef.current.focus();
+        triggerRef.current = null;
+      }
+    }
+  }, [isOpen]);
+
+  // Move focus into modal when it opens
+  React.useEffect(() => {
+    if (isOpen && modalRef.current) {
+      const focusable =
+        modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
+      if (focusable.length > 0) {
+        focusable[0]?.focus();
+      } else {
+        modalRef.current.focus();
+      }
+    }
+  }, [isOpen]);
+
+  // Handle ESC key press + focus trap via Tab/Shift+Tab
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!modalRef.current) return;
+
       if (e.key === "Escape") {
         onClose();
+        return;
+      }
+
+      if (e.key === "Tab") {
+        const focusable = Array.from(
+          modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS),
+        ).filter((el) => !el.closest('[tabindex="-1"]') && el.tabIndex >= 0);
+
+        if (focusable.length === 0) {
+          e.preventDefault();
+          return;
+        }
+
+        const first = focusable[0] as HTMLElement | undefined;
+        const last = focusable[focusable.length - 1] as HTMLElement | undefined;
+        if (!first || !last) return;
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
       }
     };
 
     if (isOpen) {
-      document.addEventListener("keydown", handleEscape);
+      document.addEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "hidden";
     }
 
     return () => {
-      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "unset";
     };
   }, [isOpen, onClose]);
@@ -95,11 +160,13 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      ref={modalRef}
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 outline-none"
       role="dialog"
       aria-modal="true"
-      aria-labelledby={title ? "modal-title" : undefined}
-      aria-describedby={description ? "modal-description" : undefined}
+      aria-labelledby={title ? titleId : undefined}
+      aria-describedby={description ? descId : undefined}
     >
       {/* Overlay */}
       <button
@@ -113,7 +180,7 @@ export function Modal({
       {/* Modal */}
       <div
         className={cn(
-          "relative w-full bg-bg-elevated border-2 border-border rounded-lg shadow-2xl animate-in fade-in zoom-in-95 duration-200",
+          "relative w-full bg-bg-elevated border-2 border-border rounded-lg shadow-2xl animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none",
           sizeClasses[size],
           className,
         )}
@@ -124,17 +191,14 @@ export function Modal({
             <div className="flex-1">
               {title && (
                 <h2
-                  id="modal-title"
+                  id={titleId}
                   className="text-xl font-bold text-text-primary"
                 >
                   {title}
                 </h2>
               )}
               {description && (
-                <p
-                  id="modal-description"
-                  className="text-sm text-text-secondary mt-1"
-                >
+                <p id={descId} className="text-sm text-text-secondary mt-1">
                   {description}
                 </p>
               )}

@@ -9,7 +9,8 @@ import { GSwarmErrorHandler } from "../gswarm-error-handler";
 describe("GSwarmErrorHandler", () => {
   describe("parseResetTime", () => {
     it("parses 0s reset time", () => {
-      const message = "You have exhausted your capacity on this model. Your quota will reset after 0s.";
+      const message =
+        "You have exhausted your capacity on this model. Your quota will reset after 0s.";
       expect(GSwarmErrorHandler.parseResetTime(message)).toBe(0);
     });
 

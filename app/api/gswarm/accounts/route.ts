@@ -10,8 +10,12 @@ import { NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
 import { PREFIX, consoleError } from "@/lib/console";
 import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
-import { loadAllTokens, getTokenExpiryTime } from "@/lib/gswarm/storage/tokens";
-import { addCorsHeaders, corsPreflightResponse } from "../_shared/auth";
+import { getTokenExpiryTime, loadAllTokens } from "@/lib/gswarm/storage/tokens";
+import {
+  addCorsHeaders,
+  corsPreflightResponse,
+  extractClientIp,
+} from "../_shared/auth";
 
 /**
  * Extract API key from Authorization header
@@ -25,50 +29,48 @@ function extractApiKey(request: NextRequest): string | null {
 }
 
 /**
- * Get client IP from request headers
- */
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-/**
  * Authenticate request using either session cookie or API key.
  *
  * @param request - The incoming Next.js request
- * @returns Validation result with error message if invalid
+ * @returns Validation result with isAdmin flag and error message if invalid
  */
-async function authenticateRequest(
-  request: NextRequest,
-): Promise<{ valid: boolean; error?: string }> {
+async function authenticateRequest(request: NextRequest): Promise<{
+  valid: boolean;
+  isAdmin: boolean;
+  keyName?: string;
+  error?: string;
+}> {
   // First, try session authentication (for dashboard)
   const sessionValidation = await validateAdminSession(request);
   if (sessionValidation.valid) {
-    return { valid: true };
+    return { valid: true, isAdmin: true };
   }
 
   // Fall back to API key authentication
   const apiKey = extractApiKey(request);
   if (!apiKey) {
-    return { valid: false, error: "Missing authentication" };
+    return { valid: false, isAdmin: false, error: "Missing authentication" };
   }
 
-  const clientIp = getClientIp(request);
+  const clientIp = extractClientIp(request);
   const validationResult = await validateApiKey(
     apiKey,
     clientIp,
     "/api/gswarm/accounts",
   );
 
-  return validationResult;
+  if (!validationResult.valid) {
+    return { valid: false, isAdmin: false, error: validationResult.error };
+  }
+
+  // API key holders are non-admin users
+  return { valid: true, isAdmin: false, keyName: validationResult.name };
 }
 
 /**
  * GET /api/gswarm/accounts
- * List all accounts with their projects and status
+ * List all accounts with their projects and status.
+ * Admins see all accounts; non-admins (API key holders) receive 403.
  */
 export async function GET(request: NextRequest) {
   // Authenticate request
@@ -82,6 +84,19 @@ export async function GET(request: NextRequest) {
           message: authResult.error,
         },
         { status: isRateLimit ? 429 : 401 },
+      ),
+    );
+  }
+
+  // Only admins can list all accounts — API key holders are forbidden
+  if (!authResult.isAdmin) {
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Forbidden",
+          message: "Admin access required to list accounts",
+        },
+        { status: 403 },
       ),
     );
   }

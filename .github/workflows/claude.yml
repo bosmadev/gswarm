@@ -266,7 +266,61 @@ jobs:
             - User will pull to CLI to resolve manually
 
   # ============================================
-  # Job 2: Auto-update CHANGELOG + Version Bump
+  # Job 2: Auto-update PR Body on Push
+  # ============================================
+  # Lightweight job (no Claude API) — regenerates PR body from commits using
+  # aggregate-pr.py whenever new commits are pushed to a PR branch.
+  # This complements the /commit hook (local auto-update) with CI-side coverage
+  # for pushes from other sources (GitHub web editor, other contributors, etc).
+  update-pr-body:
+    name: Update PR Body
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 50
+
+      - name: Clone Claude config
+        run: |
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.ADMIN_TOKEN }}@github.com/bosmadev/claude.git \
+            ~/.claude 2>/dev/null || echo "::warning::Could not clone config"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Update PR body
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BASE="${{ github.event.pull_request.base.ref }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+
+          # Generate updated PR body from current commits
+          PR_OUTPUT=$(python ~/.claude/scripts/aggregate-pr.py "$BASE" 2>/dev/null || echo "")
+          if [ -z "$PR_OUTPUT" ]; then
+            echo "::warning::aggregate-pr.py produced no output, skipping update"
+            exit 0
+          fi
+
+          # Skip the title line (first line), use rest as body
+          PR_BODY=$(echo "$PR_OUTPUT" | tail -n +3)
+
+          if [ -n "$PR_BODY" ]; then
+            gh pr edit "$PR_NUMBER" --body "$PR_BODY"
+            echo "✓ PR #${PR_NUMBER} body updated with latest commits"
+          fi
+
+  # ============================================
+  # Job 3: Auto-update CHANGELOG + Version Bump
   # ============================================
   changelog:
     name: Update CHANGELOG & Version

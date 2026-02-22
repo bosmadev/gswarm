@@ -6,13 +6,6 @@
  */
 
 import { type NextRequest, NextResponse } from "next/server";
-import { parseAndValidate } from "@/lib/api-validation";
-import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
-import { gswarmClient } from "@/lib/gswarm/client";
-import { errorResponse } from "@/lib/gswarm/error-handler";
-import { ApiError } from "@/lib/gswarm/errors";
-import { recordMetric } from "@/lib/gswarm/storage/metrics";
-import type { RequestMetric } from "@/lib/gswarm/types";
 import {
   addCorsHeaders,
   addRateLimitHeaders,
@@ -22,6 +15,13 @@ import {
   unauthorizedResponse,
 } from "@/app/api/gswarm/_shared/auth";
 import { streamingResponse } from "@/app/api/gswarm/_shared/streaming";
+import { parseAndValidate } from "@/lib/api-validation";
+import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
+import { gswarmClient } from "@/lib/gswarm/client";
+import { errorResponse } from "@/lib/gswarm/error-handler";
+import { ApiError } from "@/lib/gswarm/errors";
+import { recordMetric } from "@/lib/gswarm/storage/metrics";
+import type { RequestMetric } from "@/lib/gswarm/types";
 
 // =============================================================================
 // MODEL MAPPING
@@ -40,17 +40,42 @@ const MODEL_MAP: Record<string, string> = {
 };
 
 /**
- * Maps OpenAI model to Gemini model
- * Pass-through if already a Gemini model
+ * Allowlist of supported Gemini model IDs.
+ * Any gemini-* model string not in this list is rejected.
  */
-function mapModel(openaiModel: string): string {
-  // If it's already a gemini-* model, pass through
+const ALLOWED_MODELS = new Set<string>([
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "gemini-1.5-pro",
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-8b",
+  "gemini-3-flash-preview",
+  "gemini-3-pro-preview",
+]);
+
+/**
+ * Maps OpenAI model to Gemini model.
+ * Returns null if the resolved Gemini model is not in the allowlist.
+ */
+function mapModel(openaiModel: string): string | null {
+  let geminiModel: string;
+
+  // If it's already a gemini-* model, validate against allowlist directly
   if (openaiModel.startsWith("gemini-")) {
-    return openaiModel;
+    geminiModel = openaiModel;
+  } else {
+    // Use mapping table, default to gemini-2.0-flash
+    geminiModel = MODEL_MAP[openaiModel] || "gemini-2.0-flash";
   }
 
-  // Otherwise use mapping table, default to gemini-2.0-flash
-  return MODEL_MAP[openaiModel] || "gemini-2.0-flash";
+  // Validate against allowlist
+  if (!ALLOWED_MODELS.has(geminiModel)) {
+    return null;
+  }
+
+  return geminiModel;
 }
 
 // =============================================================================
@@ -114,9 +139,20 @@ function generateCompletionId(): string {
 }
 
 /**
- * Converts messages array to a single prompt string
+ * Strips role-prefix injection patterns from user content.
+ * Prevents users from injecting "System:", "Assistant:", "User:" prefixes
+ * to manipulate the conversation structure.
  */
-function messagesToPrompt(messages: ChatMessage[]): {
+function stripRolePrefixes(content: string): string {
+  // Remove leading role-prefix patterns (case-insensitive, with optional whitespace)
+  return content.replace(/^\s*(?:system|assistant|user)\s*:\s*/i, "");
+}
+
+/**
+ * Converts messages array to a single prompt string.
+ * Exported for unit testing.
+ */
+export function messagesToPrompt(messages: ChatMessage[]): {
   prompt: string;
   systemPrompt?: string;
 } {
@@ -130,24 +166,25 @@ function messagesToPrompt(messages: ChatMessage[]): {
         ? `${systemPrompt}\n${message.content}`
         : message.content;
     } else if (message.role === "user") {
-      conversationParts.push(`User: ${message.content}`);
+      // Strip role-prefix injection from user content
+      const safeContent = stripRolePrefixes(message.content);
+      conversationParts.push(`User: ${safeContent}`);
     } else if (message.role === "assistant") {
       conversationParts.push(`Assistant: ${message.content}`);
     }
   }
 
   // The last user message is the main prompt
-  let lastUserIndex = -1;
+  let lastUserMessage: ChatMessage | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
-      lastUserIndex = i;
+    if (messages[i]?.role === "user") {
+      lastUserMessage = messages[i];
       break;
     }
   }
-  const prompt =
-    lastUserIndex >= 0
-      ? messages[lastUserIndex].content
-      : conversationParts.join("\n\n");
+  const prompt = lastUserMessage
+    ? stripRolePrefixes(lastUserMessage.content)
+    : conversationParts.join("\n\n");
 
   return { prompt, systemPrompt };
 }
@@ -192,7 +229,13 @@ export async function POST(request: NextRequest) {
     return parseResult.response;
   }
 
-  const { messages, model: requestedModel, max_tokens, temperature, stream } = parseResult.data;
+  const {
+    messages,
+    model: requestedModel,
+    max_tokens,
+    temperature,
+    stream,
+  } = parseResult.data;
 
   // Validate messages array is not empty
   if (!messages.length) {
@@ -233,8 +276,22 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Map OpenAI model to Gemini model
-  const geminiModel = requestedModel ? mapModel(requestedModel) : "gemini-2.0-flash";
+  // Map OpenAI model to Gemini model and validate against allowlist
+  const geminiModel = requestedModel
+    ? mapModel(requestedModel)
+    : "gemini-2.0-flash";
+
+  if (geminiModel === null) {
+    return addCorsHeaders(
+      NextResponse.json(
+        {
+          error: "Validation failed",
+          message: `Unsupported model: '${requestedModel}'. Supported models: ${[...ALLOWED_MODELS].join(", ")}`,
+        },
+        { status: 400 },
+      ),
+    );
+  }
 
   consoleDebug(
     PREFIX.DEBUG,
@@ -278,7 +335,10 @@ export async function POST(request: NextRequest) {
 
       // Record metric asynchronously (don't wait for it)
       recordMetric(metric).catch((error) => {
-        consoleError(PREFIX.ERROR, `[OpenAI API] Failed to record metric: ${error}`);
+        consoleError(
+          PREFIX.ERROR,
+          `[OpenAI API] Failed to record metric: ${error}`,
+        );
       });
 
       return streamingResponse({
@@ -308,7 +368,10 @@ export async function POST(request: NextRequest) {
 
     // Record metric asynchronously (don't wait for it)
     recordMetric(metric).catch((error) => {
-      consoleError(PREFIX.ERROR, `[OpenAI API] Failed to record metric: ${error}`);
+      consoleError(
+        PREFIX.ERROR,
+        `[OpenAI API] Failed to record metric: ${error}`,
+      );
     });
 
     // Build OpenAI-compatible response

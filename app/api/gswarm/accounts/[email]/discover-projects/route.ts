@@ -10,10 +10,7 @@ import { NextResponse } from "next/server";
 import { validateAdminSession } from "@/lib/admin-session";
 import { PREFIX, consoleError, consoleLog } from "@/lib/console";
 import { discoverProjects } from "@/lib/gswarm/oauth";
-import {
-  loadToken,
-  updateTokenProjects,
-} from "@/lib/gswarm/storage/tokens";
+import { loadToken, updateTokenProjects } from "@/lib/gswarm/storage/tokens";
 import { addCorsHeaders, corsPreflightResponse } from "../../../_shared/auth";
 
 /**

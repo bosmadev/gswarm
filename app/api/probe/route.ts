@@ -187,8 +187,8 @@ export async function POST(request: NextRequest) {
               (p) => p.projectId === result.projectId,
             );
 
-            if (projectIndex !== -1 && storage.projects[projectIndex].enabled) {
-              storage.projects[projectIndex].enabled = false;
+            if (projectIndex !== -1 && storage.projects[projectIndex]!.enabled) {
+              storage.projects[projectIndex]!.enabled = false;
               result.disabled = true;
               storageModified = true;
               disabledCount++;

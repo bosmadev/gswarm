@@ -61,7 +61,7 @@ const ENV_VARIABLES: EnvVariable[] = [
     name: "GLOBAL_PORT",
     required: false,
     description: "Server port (used by launch script and Next.js)",
-    example: "3001",
+    example: "3000",
     warnIfMissing: false,
   },
   {

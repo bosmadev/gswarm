@@ -9,21 +9,16 @@
  */
 
 import type { GSwarmConfig, StorageResult } from "../types";
-import { CacheManager, getDataPath, readJsonFile, writeJsonFile } from "./base";
+import { getRedisClient } from "./redis";
 
 // =============================================================================
 // Constants
 // =============================================================================
 
 /**
- * Configuration file name
+ * Redis key for configuration storage
  */
-export const CONFIG_FILE = "config.json";
-
-/**
- * Cache TTL for configuration (5 minutes)
- */
-export const CONFIG_CACHE_TTL_MS = 300000;
+export const CONFIG_KEY = "config";
 
 // =============================================================================
 // Default Configuration
@@ -70,24 +65,8 @@ export const DEFAULT_CONFIG: GSwarmConfig = {
 };
 
 // =============================================================================
-// Cache
-// =============================================================================
-
-/**
- * Configuration cache using CacheManager
- */
-const configCache = new CacheManager<GSwarmConfig>(CONFIG_CACHE_TTL_MS);
-
-// =============================================================================
 // Configuration Operations
 // =============================================================================
-
-/**
- * Gets the full path to the config file
- */
-function getConfigPath(): string {
-  return getDataPath(CONFIG_FILE);
-}
 
 /**
  * Type guard to check if value is a plain object
@@ -137,7 +116,7 @@ export function mergeWithDefaults<T>(config: Partial<T>, defaults: T): T {
 }
 
 /**
- * Loads configuration from storage with caching.
+ * Loads configuration from Redis storage.
  * Creates and persists the default configuration if it doesn't exist.
  * Missing fields are merged with defaults to ensure all keys are present.
  *
@@ -152,33 +131,34 @@ export function mergeWithDefaults<T>(config: Partial<T>, defaults: T): T {
  * ```
  */
 export async function loadConfig(): Promise<StorageResult<GSwarmConfig>> {
-  // Return cached config if valid
-  const cached = configCache.get();
-  if (cached) {
-    return { success: true, data: cached };
-  }
+  try {
+    const redis = getRedisClient();
+    const data = await redis.get(CONFIG_KEY);
 
-  const configPath = getConfigPath();
-  const result = await readJsonFile<Partial<GSwarmConfig>>(configPath);
-
-  if (!result.success) {
-    if (result.error.startsWith("File not found")) {
-      // Create default config
-      const writeResult = await writeJsonFile(configPath, DEFAULT_CONFIG);
-      if (!writeResult.success) {
-        return { success: false, error: writeResult.error };
-      }
-      configCache.set(DEFAULT_CONFIG);
+    if (!data) {
+      // Create default config in Redis
+      await redis.set(CONFIG_KEY, JSON.stringify(DEFAULT_CONFIG));
       return { success: true, data: DEFAULT_CONFIG };
     }
-    return { success: false, error: result.error };
+
+    // Parse and merge with defaults to ensure all fields exist
+    let parsedConfig: Partial<GSwarmConfig>;
+    try {
+      parsedConfig = JSON.parse(data);
+    } catch {
+      return {
+        success: false,
+        error: "Failed to parse stored config: invalid JSON",
+      };
+    }
+    const mergedConfig = mergeWithDefaults(parsedConfig, DEFAULT_CONFIG);
+
+    return { success: true, data: mergedConfig };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown Redis error";
+    return { success: false, error: `Failed to load config: ${errorMessage}` };
   }
-
-  // Merge loaded config with defaults to ensure all fields exist
-  const mergedConfig = mergeWithDefaults(result.data, DEFAULT_CONFIG);
-  configCache.set(mergedConfig);
-
-  return { success: true, data: mergedConfig };
 }
 
 /**
@@ -201,21 +181,25 @@ export async function loadConfig(): Promise<StorageResult<GSwarmConfig>> {
 export async function updateConfig(
   updates: Partial<GSwarmConfig>,
 ): Promise<StorageResult<GSwarmConfig>> {
-  const loadResult = await loadConfig();
-  if (!loadResult.success) {
-    return { success: false, error: loadResult.error };
+  try {
+    const loadResult = await loadConfig();
+    if (!loadResult.success) {
+      return { success: false, error: loadResult.error };
+    }
+
+    const updatedConfig = mergeWithDefaults(updates, loadResult.data);
+    const redis = getRedisClient();
+    await redis.set(CONFIG_KEY, JSON.stringify(updatedConfig));
+
+    return { success: true, data: updatedConfig };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown Redis error";
+    return {
+      success: false,
+      error: `Failed to update config: ${errorMessage}`,
+    };
   }
-
-  const updatedConfig = mergeWithDefaults(updates, loadResult.data);
-  const configPath = getConfigPath();
-
-  const writeResult = await writeJsonFile(configPath, updatedConfig);
-  if (!writeResult.success) {
-    return { success: false, error: writeResult.error };
-  }
-
-  configCache.set(updatedConfig);
-  return { success: true, data: updatedConfig };
 }
 
 /**
@@ -223,15 +207,18 @@ export async function updateConfig(
  * @returns The default configuration
  */
 export async function resetConfig(): Promise<StorageResult<GSwarmConfig>> {
-  const configPath = getConfigPath();
-
-  const writeResult = await writeJsonFile(configPath, DEFAULT_CONFIG);
-  if (!writeResult.success) {
-    return { success: false, error: writeResult.error };
+  try {
+    const redis = getRedisClient();
+    await redis.set(CONFIG_KEY, JSON.stringify(DEFAULT_CONFIG));
+    return { success: true, data: DEFAULT_CONFIG };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown Redis error";
+    return {
+      success: false,
+      error: `Failed to reset config: ${errorMessage}`,
+    };
   }
-
-  configCache.set(DEFAULT_CONFIG);
-  return { success: true, data: DEFAULT_CONFIG };
 }
 
 /**
@@ -261,7 +248,8 @@ export function getDefaultConfig(): GSwarmConfig {
 /**
  * Clears the configuration cache
  * Useful for testing or forcing a reload
+ * Note: With Redis, this is a no-op since Redis is the source of truth
  */
 export function clearConfigCache(): void {
-  configCache.invalidate();
+  // No-op: Redis is the cache, no in-memory cache to clear
 }

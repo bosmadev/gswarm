@@ -687,21 +687,21 @@ function startAnimation(): void {
 
     // Move to top header line (line 1) and update
     process.stdout.write("\x1b[1;1H\x1b[2K");
-    process.stdout.write(prerenderedHeaderFrames[currentAnimationFrame]);
+    process.stdout.write(prerenderedHeaderFrames[currentAnimationFrame] ?? "");
 
     // Move to title line (line 2) and update with animated name
     process.stdout.write("\x1b[2;1H\x1b[2K");
     process.stdout.write(
-      `  ${prerenderedNameFrames[currentAnimationFrame]} (${orangeVersion}) ${DIM}|${RESET} ${DESCRIPTION}`,
+      `  ${prerenderedNameFrames[currentAnimationFrame] ?? ""} (${orangeVersion}) ${DIM}|${RESET} ${DESCRIPTION}`,
     );
 
     // Move to bottom header line (line 3) and update
     process.stdout.write("\x1b[3;1H\x1b[2K");
-    process.stdout.write(prerenderedHeaderFrames[currentAnimationFrame]);
+    process.stdout.write(prerenderedHeaderFrames[currentAnimationFrame] ?? "");
 
     // Move to footer line and update
     process.stdout.write(`\x1b[${menuLineCount};1H\x1b[2K`);
-    process.stdout.write(prerenderedFrames[currentAnimationFrame]);
+    process.stdout.write(prerenderedFrames[currentAnimationFrame] ?? "");
 
     // Restore cursor position
     process.stdout.write("\x1b[u");
@@ -856,7 +856,7 @@ async function killBlockingProcesses(): Promise<void> {
       for (const line of lines) {
         const match = line.match(/"node\.exe","(\d+)"/);
         if (match) {
-          const pid = Number.parseInt(match[1], 10);
+          const pid = Number.parseInt(match[1]!, 10);
           if (pid === currentPid) continue;
           try {
             // Check if this node process is running next/pnpm
@@ -887,7 +887,7 @@ async function killBlockingProcesses(): Promise<void> {
       const portLines = netstatOutput.trim().split("\n").filter(Boolean);
       for (const line of portLines) {
         const parts = line.trim().split(/\s+/);
-        const pid = Number.parseInt(parts[parts.length - 1], 10);
+        const pid = Number.parseInt(parts[parts.length - 1] ?? "", 10);
         if (pid && pid !== currentPid) {
           try {
             execSync(`taskkill /F /PID ${pid} 2>NUL`);
@@ -1057,8 +1057,69 @@ async function startDevServer(): Promise<void> {
     `  ${DIM}Hot reload enabled, port ${SERVER_PORT}${RESET}\n\n`,
   );
 
+  // Start React Grab agent provider server in background
+  process.stdout.write(`${BOLD}[REACT GRAB] Agent Provider${RESET}\n`);
   process.stdout.write(
-    `${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
+    `  ${DIM}Starting @react-grab/claude-code agent server...${RESET}\n`,
+  );
+
+  // Use forward slashes — NODE_OPTIONS parses backslashes as escape chars
+  const windowsHidePatch = path
+    .resolve(import.meta.dirname, "reactgrab-patch.cjs")
+    .replaceAll("\\", "/");
+
+  const reactGrabServerPath = resolveReactGrabServer();
+
+  if (reactGrabServerPath) {
+    agentServerProcess = spawn(
+      process.execPath,
+      [
+        "--require",
+        windowsHidePatch,
+        "--no-deprecation",
+        "--disable-warning=SourceMapWarning",
+        reactGrabServerPath,
+      ],
+      {
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          REACT_GRAB_CWD: path.resolve(import.meta.dirname, ".."),
+        },
+        windowsHide: true,
+      },
+    );
+  } else {
+    process.stdout.write(
+      `  ${YELLOW}⚠${RESET} Using npx fallback (windowsHide patch may not apply)\n`,
+    );
+    agentServerProcess = spawn("npx", ["@react-grab/claude-code@latest"], {
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require "${windowsHidePatch}" --no-deprecation --disable-warning=SourceMapWarning`,
+        REACT_GRAB_CWD: path.resolve(import.meta.dirname, ".."),
+      },
+      shell: true,
+      windowsHide: true,
+    });
+  }
+
+  agentServerProcess.on("error", (err) => {
+    process.stdout.write(
+      `  ${YELLOW}⚠${RESET} React Grab agent server failed: ${err.message}\n`,
+    );
+    process.stdout.write(
+      `  ${DIM}Copy mode still works. Prompt mode requires the agent server.${RESET}\n`,
+    );
+  });
+
+  process.stdout.write(
+    `  ${GREEN}✔${RESET} Agent server started (background)\n`,
+  );
+
+  process.stdout.write(
+    `\n${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n\n`,
   );
 
   childProcess = spawn("pnpm", ["dev"], {
@@ -1073,6 +1134,14 @@ async function startDevServer(): Promise<void> {
 
   childProcess.on("close", (code) => {
     isServerLaunching = false;
+    if (agentServerProcess) {
+      try {
+        agentServerProcess.kill("SIGTERM");
+      } catch {
+        /* already dead */
+      }
+      agentServerProcess = null;
+    }
     process.stdout.write(
       `\n${YELLOW}Dev server exited with code ${code}${RESET}\n`,
     );
@@ -1081,6 +1150,14 @@ async function startDevServer(): Promise<void> {
 
   childProcess.on("error", (err) => {
     isServerLaunching = false;
+    if (agentServerProcess) {
+      try {
+        agentServerProcess.kill("SIGTERM");
+      } catch {
+        /* already dead */
+      }
+      agentServerProcess = null;
+    }
     process.stdout.write(
       `\n${RED}Error starting dev server: ${err.message}${RESET}\n`,
     );
@@ -1486,7 +1563,7 @@ async function daemonStart(): Promise<void> {
   // Start in background (--experimental-transform-types for Node native TS)
   const child = spawn(
     "node",
-    ["--experimental-transform-types", process.argv[1], "foreground"],
+    ["--experimental-transform-types", process.argv[1] ?? __filename, "foreground"],
     {
       detached: true,
       stdio: "ignore",
@@ -2028,9 +2105,10 @@ function postbuild(): void {
 async function main(): Promise<void> {
   const command = args[0]?.toLowerCase();
 
-  // Handle daemon commands
-  if (command) {
-    switch (command) {
+  // Handle daemon commands and flags
+  const normalizedCommand = command?.replace(/^--/, "");
+  if (normalizedCommand) {
+    switch (normalizedCommand) {
       case "start":
         await daemonStart();
         return;
@@ -2055,6 +2133,9 @@ async function main(): Promise<void> {
         return;
       case "postbuild":
         postbuild();
+        return;
+      case "debug":
+        await startDevServerDebug();
         return;
     }
   }

@@ -658,7 +658,7 @@ export function lightGradient(text: string): string {
   return (
     text
       .split("")
-      .map((char, i) => `${color256(codes[i % codes.length])}${char}`)
+      .map((char, i) => `${color256(codes[i % codes.length]!)}${char}`)
       .join("") + RESET
   );
 }
@@ -673,7 +673,7 @@ export function customGradient(text: string, codes: number[]): string {
   return (
     text
       .split("")
-      .map((char, i) => `${color256(codes[i % codes.length])}${char}`)
+      .map((char, i) => `${color256(codes[i % codes.length]!)}${char}`)
       .join("") + RESET
   );
 }

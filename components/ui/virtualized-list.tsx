@@ -49,7 +49,7 @@ function VirtualizedList<T>({
     estimateSize: () => itemHeight + gap,
     overscan,
     getItemKey: getItemKey
-      ? (index) => getItemKey(items[index], index)
+      ? (index) => getItemKey(items[index]!, index)
       : undefined,
   });
 
@@ -80,7 +80,7 @@ function VirtualizedList<T>({
               transform: `translateY(${virtualItem.start}px)`,
             }}
           >
-            {renderItem(items[virtualItem.index], virtualItem.index)}
+            {renderItem(items[virtualItem.index]!, virtualItem.index)}
           </div>
         ))}
       </div>

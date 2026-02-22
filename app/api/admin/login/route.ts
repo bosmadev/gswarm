@@ -11,13 +11,14 @@
 
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { extractClientIp } from "@/app/api/gswarm/_shared/auth";
 import {
   ADMIN_SESSION_COOKIE,
   createSession,
   validateCredentials,
 } from "@/lib/admin-session";
 import { parseAndValidate } from "@/lib/api-validation";
-import { PREFIX, consoleError } from "@/lib/console";
+import { PREFIX, consoleError, consoleLog } from "@/lib/console";
 import { checkAuthRateLimit } from "@/lib/rate-limit";
 
 interface LoginRequestBody extends Record<string, unknown> {
@@ -36,6 +37,8 @@ export async function POST(request: NextRequest) {
     return rateLimitResponse;
   }
 
+  const clientIp = extractClientIp(request);
+
   try {
     // Parse and validate request body
     const validation = await parseAndValidate<LoginRequestBody>(request, {
@@ -52,10 +55,14 @@ export async function POST(request: NextRequest) {
 
     const { username, password } = validation.data;
 
-    // Validate credentials
-    const result = validateCredentials(username, password);
+    // Validate credentials (now async - reads from Redis)
+    const result = await validateCredentials(username, password);
 
     if (!result.valid) {
+      consoleLog(
+        PREFIX.API,
+        `Admin login failed: invalid credentials for "${username}" from IP ${clientIp}`,
+      );
       return NextResponse.json(
         { error: "Unauthorized", message: "Invalid credentials" },
         { status: 401 },
@@ -64,6 +71,11 @@ export async function POST(request: NextRequest) {
 
     // Create session
     const session = await createSession(result.user as string);
+
+    consoleLog(
+      PREFIX.API,
+      `Admin login success: "${result.user}" from IP ${clientIp}`,
+    );
 
     // Create response with session cookie
     const response = NextResponse.json({ success: true });

@@ -56,10 +56,7 @@ async function populateProjectsForToken(
   // Update token with projects
   const updateResult = await updateTokenProjects(email, projects);
   if (!updateResult.success) {
-    consoleError(
-      PREFIX.ERROR,
-      `Failed to update token: ${updateResult.error}`,
-    );
+    consoleError(PREFIX.ERROR, `Failed to update token: ${updateResult.error}`);
     return { success: false, projectCount: 0 };
   }
 

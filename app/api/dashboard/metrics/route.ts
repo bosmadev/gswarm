@@ -65,14 +65,14 @@ export async function GET(request: NextRequest) {
     const endDate = getTodayDateString();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days + 1);
-    const startDateStr = startDate.toISOString().split("T")[0];
+    const startDateStr = startDate.toISOString().split("T")[0] ?? startDate.toISOString().slice(0, 10);
 
     // Build date strings for parallel fetching
     const dateStrings: string[] = [];
     for (let i = 0; i < days; i++) {
       const date = new Date(startDate);
       date.setDate(date.getDate() + i);
-      dateStrings.push(date.toISOString().split("T")[0]);
+      dateStrings.push(date.toISOString().split("T")[0] ?? date.toISOString().slice(0, 10));
     }
 
     // Parallelize all metrics fetches to avoid N+1 pattern
@@ -132,7 +132,12 @@ export async function GET(request: NextRequest) {
       },
     };
 
-    return NextResponse.json(response);
+    return NextResponse.json(response, {
+      headers: {
+        // Cache per-user for 30 seconds; historical metrics change slowly
+        "Cache-Control": "private, max-age=30",
+      },
+    });
   } catch (error) {
     consoleError(
       PREFIX.ERROR,

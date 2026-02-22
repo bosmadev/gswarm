@@ -54,30 +54,28 @@ export function ConfirmationProvider({ children }: ConfirmationProviderProps) {
   const [options, setOptions] = React.useState<ConfirmationOptions | null>(
     null,
   );
-  const [resolver, setResolver] = React.useState<
-    ((value: boolean) => void) | null
-  >(null);
+  const resolverRef = React.useRef<((value: boolean) => void) | null>(null);
 
   const confirm = (opts: ConfirmationOptions): Promise<boolean> => {
     setOptions(opts);
     setIsOpen(true);
     return new Promise((resolve) => {
-      setResolver(() => resolve);
+      resolverRef.current = resolve;
     });
   };
 
   const handleConfirm = () => {
-    if (resolver) resolver(true);
+    if (resolverRef.current) resolverRef.current(true);
+    resolverRef.current = null;
     setIsOpen(false);
     setOptions(null);
-    setResolver(null);
   };
 
   const handleCancel = () => {
-    if (resolver) resolver(false);
+    if (resolverRef.current) resolverRef.current(false);
+    resolverRef.current = null;
     setIsOpen(false);
     setOptions(null);
-    setResolver(null);
   };
 
   const getButtonVariant = (type?: "warning" | "danger" | "info") => {

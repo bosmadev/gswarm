@@ -8,12 +8,17 @@
 
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { validateAdminSession } from "@/lib/admin-session";
 import { safeParseBody } from "@/lib/api-validation";
 import { PREFIX, consoleError } from "@/lib/console";
 import { validateApiKey } from "@/lib/gswarm/storage/api-keys";
 import { loadConfig, updateConfig } from "@/lib/gswarm/storage/config";
 import type { GSwarmConfig } from "@/lib/gswarm/types";
-import { addCorsHeaders, corsPreflightResponse } from "../_shared/auth";
+import {
+  addCorsHeaders,
+  corsPreflightResponse,
+  extractClientIp,
+} from "../_shared/auth";
 
 /**
  * Extract API key from Authorization header
@@ -27,55 +32,60 @@ function extractApiKey(request: NextRequest): string | null {
 }
 
 /**
- * Get client IP from request headers
- */
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-/**
  * GET /api/gswarm/config
- * Get current GSwarm configuration
+ * Get current GSwarm configuration (admin only)
  */
 export async function GET(request: NextRequest) {
-  // Extract and validate API key
-  const apiKey = extractApiKey(request);
-  if (!apiKey) {
-    return addCorsHeaders(
-      NextResponse.json(
-        {
-          error: "Unauthorized",
-          message: "Missing API key in Authorization header",
-        },
-        { status: 401 },
-      ),
+  // Require admin session (cookie-based)
+  const sessionResult = await validateAdminSession(request);
+  if (!sessionResult.valid) {
+    // Fall back to API key auth, then enforce admin via separate check
+    const apiKey = extractApiKey(request);
+    if (!apiKey) {
+      return addCorsHeaders(
+        NextResponse.json(
+          {
+            error: "Forbidden",
+            message: "Admin access required",
+          },
+          { status: 403 },
+        ),
+      );
+    }
+
+    const clientIp = extractClientIp(request);
+    const validationResult = await validateApiKey(
+      apiKey,
+      clientIp,
+      "/api/gswarm/config",
     );
-  }
 
-  const clientIp = getClientIp(request);
-  const validationResult = await validateApiKey(
-    apiKey,
-    clientIp,
-    "/api/gswarm/config",
-  );
+    if (!validationResult.valid) {
+      return addCorsHeaders(
+        NextResponse.json(
+          {
+            error:
+              validationResult.error === "Rate limit exceeded"
+                ? "Rate limit exceeded"
+                : "Unauthorized",
+            message: validationResult.error,
+          },
+          {
+            status:
+              validationResult.error === "Rate limit exceeded" ? 429 : 401,
+          },
+        ),
+      );
+    }
 
-  if (!validationResult.valid) {
+    // API key holders are not admins — config is admin-only
     return addCorsHeaders(
       NextResponse.json(
         {
-          error:
-            validationResult.error === "Rate limit exceeded"
-              ? "Rate limit exceeded"
-              : "Unauthorized",
-          message: validationResult.error,
+          error: "Forbidden",
+          message: "Admin access required to view configuration",
         },
-        {
-          status: validationResult.error === "Rate limit exceeded" ? 429 : 401,
-        },
+        { status: 403 },
       ),
     );
   }
@@ -118,43 +128,19 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/gswarm/config
- * Update GSwarm configuration (partial updates supported)
+ * Update GSwarm configuration (admin only)
  */
 export async function POST(request: NextRequest) {
-  // Extract and validate API key
-  const apiKey = extractApiKey(request);
-  if (!apiKey) {
+  // Require admin session
+  const sessionResult = await validateAdminSession(request);
+  if (!sessionResult.valid) {
     return addCorsHeaders(
       NextResponse.json(
         {
-          error: "Unauthorized",
-          message: "Missing API key in Authorization header",
+          error: "Forbidden",
+          message: "Admin access required to update configuration",
         },
-        { status: 401 },
-      ),
-    );
-  }
-
-  const clientIp = getClientIp(request);
-  const validationResult = await validateApiKey(
-    apiKey,
-    clientIp,
-    "/api/gswarm/config",
-  );
-
-  if (!validationResult.valid) {
-    return addCorsHeaders(
-      NextResponse.json(
-        {
-          error:
-            validationResult.error === "Rate limit exceeded"
-              ? "Rate limit exceeded"
-              : "Unauthorized",
-          message: validationResult.error,
-        },
-        {
-          status: validationResult.error === "Rate limit exceeded" ? 429 : 401,
-        },
+        { status: 403 },
       ),
     );
   }

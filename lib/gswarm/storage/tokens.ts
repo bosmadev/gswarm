@@ -1,32 +1,23 @@
 /**
  * @file lib/gswarm/storage/tokens.ts
- * @version 1.0
- * @description OAuth token storage with caching and lifecycle management.
+ * @version 2.0
+ * @description OAuth token storage with Redis persistence and caching.
  *
- * Manages OAuth token persistence with caching, validation, and lifecycle operations.
- * Tokens are stored as JSON files in the oauth-tokens directory.
+ * Manages OAuth token persistence using Redis hashes with caching and lifecycle operations.
+ * Tokens are stored in Redis as hashes: oauth-tokens:{email}
  */
 
-import { join } from "node:path";
 import { PREFIX, consoleDebug, consoleError } from "@/lib/console";
+import { storageError } from "../schemas";
 import type { StorageResult, StoredToken, TokenData } from "../types";
-import {
-  CacheManager,
-  STORAGE_BASE_DIR,
-  deleteFile,
-  ensureDir,
-  getStoragePath,
-  listFiles,
-  readJsonFile,
-  writeJsonFile,
-} from "./base";
+import { getRedisClient } from "./redis";
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-/** Directory name for token storage */
-export const TOKENS_DIR = "oauth-tokens";
+/** Redis key prefix for token storage */
+const TOKEN_KEY_PREFIX = "oauth-tokens:";
 
 /** Cache TTL in milliseconds (5 minutes) */
 export const TOKEN_CACHE_TTL_MS = 300_000;
@@ -41,43 +32,22 @@ const DEFAULT_EXPIRES_IN = 3600;
 // Cache
 // =============================================================================
 
-/** Token cache using CacheManager */
-const tokenCacheManager = new CacheManager<Map<string, StoredToken>>(
-  TOKEN_CACHE_TTL_MS,
-);
+/** In-memory cache for tokens */
+let tokenCache: Map<string, StoredToken> | null = null;
+let cacheTimestamp = 0;
 
 // =============================================================================
 // Helper Functions
 // =============================================================================
 
 /**
- * Sanitizes an email address for use as a filename
- * Removes or replaces characters that are invalid in filenames
- *
- * @param email - Email address to sanitize
- * @returns Safe filename string
- */
-export function sanitizeEmail(email: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: Intentionally filtering control chars for safe filenames
-  const INVALID_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
-
-  return email
-    .toLowerCase()
-    .trim()
-    .replace(INVALID_FILENAME_CHARS, "_")
-    .replace(/\.+/g, ".")
-    .replace(/^\.+|\.+$/g, "");
-}
-
-/**
- * Gets the full path to a token file for a given email
+ * Gets the Redis key for a token by email
  *
  * @param email - Email address
- * @returns Full path to the token file
+ * @returns Redis key for the token hash
  */
-export function getTokenPath(email: string): string {
-  const sanitized = sanitizeEmail(email);
-  return join(STORAGE_BASE_DIR, TOKENS_DIR, `${sanitized}.json`);
+function getTokenKey(email: string): string {
+  return `${TOKEN_KEY_PREFIX}${email.toLowerCase().trim()}`;
 }
 
 /**
@@ -113,14 +83,19 @@ export function getTokenExpiryTime(token: StoredToken): number {
  * Gets the cached tokens if valid
  */
 function getCachedTokens(): Map<string, StoredToken> | null {
-  return tokenCacheManager.get();
+  const now = Date.now();
+  if (tokenCache && now - cacheTimestamp < TOKEN_CACHE_TTL_MS) {
+    return tokenCache;
+  }
+  return null;
 }
 
 /**
- * Gets the tokens directory path
+ * Updates the token cache
  */
-function getTokensDir(): string {
-  return getStoragePath(TOKENS_DIR);
+function updateCache(tokens: Map<string, StoredToken>): void {
+  tokenCache = tokens;
+  cacheTimestamp = Date.now();
 }
 
 // =============================================================================
@@ -128,7 +103,7 @@ function getTokensDir(): string {
 // =============================================================================
 
 /**
- * Loads all tokens from storage
+ * Loads all tokens from Redis storage
  *
  * @returns Map of email to StoredToken
  */
@@ -142,59 +117,77 @@ export async function loadAllTokens(): Promise<
     return { success: true, data: cachedTokens };
   }
 
-  const tokensDir = getTokensDir();
+  try {
+    const redis = getRedisClient();
+    const tokens = new Map<string, StoredToken>();
 
-  // Ensure directory exists
-  const ensureResult = await ensureDir(tokensDir);
-  if (!ensureResult.success) {
-    return { success: false, error: ensureResult.error };
-  }
-
-  // List token files
-  const listResult = await listFiles(tokensDir, ".json");
-  if (!listResult.success) {
-    return { success: false, error: listResult.error };
-  }
-
-  // Load all token files in parallel
-  const filenames = listResult.data.filter((f) => f !== ".gitkeep");
-  const settled = await Promise.allSettled(
-    filenames.map(async (filename) => {
-      const filePath = join(tokensDir, filename);
-      const readResult = await readJsonFile<StoredToken>(filePath);
-      return { filename, readResult };
-    }),
-  );
-
-  const tokens = new Map<string, StoredToken>();
-
-  for (const result of settled) {
-    if (result.status !== "fulfilled") continue;
-    const { filename, readResult } = result.value;
-
-    if (readResult.success) {
-      const token = readResult.data;
-      if (token.email) {
-        tokens.set(token.email, token);
-      } else {
-        // Extract email from filename if not in token data
-        const email = filename.replace(/\.json$/, "");
-        token.email = email;
-        tokens.set(email, token);
-      }
-    } else {
-      consoleError(
-        PREFIX.ERROR,
-        `Failed to load token from ${filename}: ${readResult.error}`,
+    // Scan for all oauth-tokens:* keys
+    let cursor = "0";
+    do {
+      const [newCursor, keys] = await redis.scan(
+        cursor,
+        "MATCH",
+        `${TOKEN_KEY_PREFIX}*`,
+        "COUNT",
+        100,
       );
-    }
+      cursor = newCursor;
+
+      // Load all tokens in parallel
+      const settled = await Promise.allSettled(
+        keys.map(async (key) => {
+          const email = key.replace(TOKEN_KEY_PREFIX, "");
+          const data = await redis.hgetall(key);
+          return { email, data };
+        }),
+      );
+
+      for (const result of settled) {
+        if (result.status !== "fulfilled") continue;
+        const { email, data } = result.value;
+
+        if (Object.keys(data).length > 0) {
+          // Parse numeric fields back to numbers
+          let projects: string[] | undefined;
+          if (data.projects) {
+            try {
+              projects = JSON.parse(data.projects);
+            } catch {
+              return storageError(
+                `Failed to parse projects for ${email}: invalid JSON`,
+              );
+            }
+          }
+
+          const token: StoredToken = {
+            ...data,
+            email,
+            created_at: Number(data.created_at),
+            updated_at: Number(data.updated_at),
+            expires_in: data.expires_in ? Number(data.expires_in) : undefined,
+            expiry_timestamp: data.expiry_timestamp
+              ? Number(data.expiry_timestamp)
+              : undefined,
+            is_invalid: data.is_invalid === "true",
+            invalid_at: data.invalid_at ? Number(data.invalid_at) : undefined,
+            projects,
+          } as StoredToken;
+
+          tokens.set(email, token);
+        }
+      }
+    } while (cursor !== "0");
+
+    // Update cache
+    updateCache(tokens);
+
+    consoleDebug(PREFIX.DEBUG, `Loaded ${tokens.size} tokens from Redis`);
+    return { success: true, data: tokens };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    consoleError(PREFIX.ERROR, `Failed to load tokens: ${errorMessage}`);
+    return { success: false, error: errorMessage };
   }
-
-  // Update cache
-  tokenCacheManager.set(tokens);
-
-  consoleDebug(PREFIX.DEBUG, `Loaded ${tokens.size} tokens from storage`);
-  return { success: true, data: tokens };
 }
 
 /**
@@ -215,35 +208,64 @@ export async function loadToken(
     }
   }
 
-  const filePath = getTokenPath(email);
-  const readResult = await readJsonFile<StoredToken>(filePath);
+  try {
+    const redis = getRedisClient();
+    const key = getTokenKey(email);
+    const data = await redis.hgetall(key);
 
-  if (!readResult.success) {
-    return { success: false, error: `Token not found for ${email}` };
+    if (Object.keys(data).length === 0) {
+      return { success: false, error: `Token not found for ${email}` };
+    }
+
+    // Parse numeric fields back to numbers
+    let projects: string[] | undefined;
+    if (data.projects) {
+      try {
+        projects = JSON.parse(data.projects);
+      } catch {
+        return storageError(
+          `Failed to parse projects for ${email}: invalid JSON`,
+        );
+      }
+    }
+
+    const token: StoredToken = {
+      ...data,
+      email,
+      created_at: Number(data.created_at),
+      updated_at: Number(data.updated_at),
+      expires_in: data.expires_in ? Number(data.expires_in) : undefined,
+      expiry_timestamp: data.expiry_timestamp
+        ? Number(data.expiry_timestamp)
+        : undefined,
+      is_invalid: data.is_invalid === "true",
+      invalid_at: data.invalid_at ? Number(data.invalid_at) : undefined,
+      projects,
+    } as StoredToken;
+
+    // Update cache if it exists
+    const existingCache = getCachedTokens();
+    if (existingCache) {
+      existingCache.set(email, token);
+    }
+
+    return { success: true, data: token };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to load token for ${email}: ${errorMessage}`,
+    );
+    return { success: false, error: errorMessage };
   }
-
-  const token = readResult.data;
-
-  // Ensure email is set
-  if (!token.email) {
-    token.email = email;
-  }
-
-  // Update cache if it exists
-  const existingCache = getCachedTokens();
-  if (existingCache) {
-    existingCache.set(email, token);
-  }
-
-  return { success: true, data: token };
 }
 
 /**
- * Saves a token to storage
+ * Saves a token to Redis storage
  *
  * @param email - Email address to save token for
  * @param tokenData - Token data to save (can include client, projects)
- * @param preserveMetadata - Whether to preserve existing client/projects from disk (default: true)
+ * @param preserveMetadata - Whether to preserve existing client/projects from Redis (default: true)
  * @returns The saved StoredToken
  */
 export async function saveToken(
@@ -251,72 +273,117 @@ export async function saveToken(
   tokenData: TokenData,
   preserveMetadata = true,
 ): Promise<StorageResult<StoredToken>> {
-  const filePath = getTokenPath(email);
-
-  // Load existing token to preserve metadata if requested
-  let existingToken: StoredToken | undefined;
-  if (preserveMetadata) {
-    const loadResult = await loadToken(email);
-    if (loadResult.success) {
-      existingToken = loadResult.data;
+  try {
+    // Load existing token to preserve metadata if requested
+    let existingToken: StoredToken | undefined;
+    if (preserveMetadata) {
+      const loadResult = await loadToken(email);
+      if (loadResult.success) {
+        existingToken = loadResult.data;
+      }
     }
+
+    // Create StoredToken from TokenData
+    const storedToken: StoredToken = {
+      ...tokenData,
+      email,
+      created_at: existingToken?.created_at ?? Math.floor(Date.now() / 1000),
+      updated_at: Math.floor(Date.now() / 1000),
+      // Preserve metadata from existing token if not provided in tokenData
+      client: (tokenData as StoredToken).client ?? existingToken?.client,
+      projects: (tokenData as StoredToken).projects ?? existingToken?.projects,
+    };
+
+    // Calculate expiry_timestamp if not set
+    if (!storedToken.expiry_timestamp && storedToken.expires_in) {
+      storedToken.expiry_timestamp =
+        storedToken.created_at + storedToken.expires_in;
+    }
+
+    const redis = getRedisClient();
+    const key = getTokenKey(email);
+
+    // Convert token to hash fields (stringify complex types)
+    const hashData: Record<string, string> = {
+      access_token: storedToken.access_token,
+      refresh_token: storedToken.refresh_token || "",
+      token_type: storedToken.token_type || "Bearer",
+      scope: storedToken.scope || "",
+      created_at: String(storedToken.created_at),
+      updated_at: String(storedToken.updated_at),
+    };
+
+    if (storedToken.expires_in !== undefined) {
+      hashData.expires_in = String(storedToken.expires_in);
+    }
+    if (storedToken.expiry_timestamp !== undefined) {
+      hashData.expiry_timestamp = String(storedToken.expiry_timestamp);
+    }
+    if (storedToken.is_invalid !== undefined) {
+      hashData.is_invalid = String(storedToken.is_invalid);
+    }
+    if (storedToken.invalid_reason) {
+      hashData.invalid_reason = storedToken.invalid_reason;
+    }
+    if (storedToken.invalid_at !== undefined) {
+      hashData.invalid_at = String(storedToken.invalid_at);
+    }
+    if (storedToken.client) {
+      hashData.client = storedToken.client;
+    }
+    if (storedToken.projects) {
+      hashData.projects = JSON.stringify(storedToken.projects);
+    }
+
+    // Save to Redis
+    await redis.hset(key, hashData);
+
+    // Update cache
+    const existingCache = getCachedTokens();
+    if (existingCache) {
+      existingCache.set(email, storedToken);
+    }
+
+    consoleDebug(PREFIX.DEBUG, `Saved token for ${email} to Redis`);
+    return { success: true, data: storedToken };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to save token for ${email}: ${errorMessage}`,
+    );
+    return { success: false, error: errorMessage };
   }
-
-  // Create StoredToken from TokenData
-  const storedToken: StoredToken = {
-    ...tokenData,
-    email,
-    created_at: existingToken?.created_at ?? Math.floor(Date.now() / 1000),
-    updated_at: Math.floor(Date.now() / 1000),
-    // Preserve metadata from existing token if not provided in tokenData
-    client: (tokenData as StoredToken).client ?? existingToken?.client,
-    projects: (tokenData as StoredToken).projects ?? existingToken?.projects,
-  };
-
-  // Calculate expiry_timestamp if not set
-  if (!storedToken.expiry_timestamp && storedToken.expires_in) {
-    storedToken.expiry_timestamp =
-      storedToken.created_at + storedToken.expires_in;
-  }
-
-  const writeResult = await writeJsonFile(filePath, storedToken);
-
-  if (!writeResult.success) {
-    return { success: false, error: writeResult.error };
-  }
-
-  // Update cache
-  const existingCache = getCachedTokens();
-  if (existingCache) {
-    existingCache.set(email, storedToken);
-  }
-
-  consoleDebug(PREFIX.DEBUG, `Saved token for ${email}`);
-  return { success: true, data: storedToken };
 }
 
 /**
- * Deletes a token from storage
+ * Deletes a token from Redis storage
  *
  * @param email - Email address to delete token for
  */
 export async function deleteToken(email: string): Promise<StorageResult<void>> {
-  const filePath = getTokenPath(email);
+  try {
+    const redis = getRedisClient();
+    const key = getTokenKey(email);
 
-  const deleteResult = await deleteFile(filePath);
+    await redis.del(key);
 
-  if (!deleteResult.success) {
-    return { success: false, error: deleteResult.error };
+    // Remove from cache
+    const existingCache = getCachedTokens();
+    if (existingCache) {
+      existingCache.delete(email);
+    }
+
+    consoleDebug(PREFIX.DEBUG, `Deleted token for ${email} from Redis`);
+    return { success: true, data: undefined };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to delete token for ${email}: ${errorMessage}`,
+    );
+    return { success: false, error: errorMessage };
   }
-
-  // Remove from cache
-  const existingCache = getCachedTokens();
-  if (existingCache) {
-    existingCache.delete(email);
-  }
-
-  consoleDebug(PREFIX.DEBUG, `Deleted token for ${email}`);
-  return { success: true, data: undefined };
 }
 
 /**
@@ -341,24 +408,37 @@ export async function markTokenInvalid(
   token.invalid_reason = errorMessage;
   token.invalid_at = Math.floor(Date.now() / 1000);
 
-  const filePath = getTokenPath(email);
-  const writeResult = await writeJsonFile(filePath, token);
+  try {
+    const redis = getRedisClient();
+    const key = getTokenKey(email);
 
-  if (!writeResult.success) {
-    return { success: false, error: writeResult.error };
+    // Update the token fields in Redis
+    await redis.hset(key, {
+      is_invalid: "true",
+      invalid_reason: errorMessage,
+      invalid_at: String(token.invalid_at),
+      updated_at: String(token.invalid_at),
+    });
+
+    // Update cache
+    const existingCache = getCachedTokens();
+    if (existingCache) {
+      existingCache.set(email, token);
+    }
+
+    consoleDebug(
+      PREFIX.DEBUG,
+      `Marked token invalid for ${email}: ${errorMessage}`,
+    );
+    return { success: true, data: token };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to mark token invalid for ${email}: ${errorMsg}`,
+    );
+    return { success: false, error: errorMsg };
   }
-
-  // Update cache
-  const existingCache = getCachedTokens();
-  if (existingCache) {
-    existingCache.set(email, token);
-  }
-
-  consoleDebug(
-    PREFIX.DEBUG,
-    `Marked token invalid for ${email}: ${errorMessage}`,
-  );
-  return { success: true, data: token };
 }
 
 /**
@@ -437,7 +517,8 @@ export async function getTokensNeedingRefresh(
  * Invalidates the token cache, forcing a reload on next access
  */
 export function invalidateTokenCache(): void {
-  tokenCacheManager.invalidate();
+  tokenCache = null;
+  cacheTimestamp = 0;
   consoleDebug(PREFIX.DEBUG, "Token cache invalidated");
 }
 
@@ -462,24 +543,34 @@ export async function updateTokenProjects(
   token.projects = projects;
   token.updated_at = Math.floor(Date.now() / 1000);
 
-  const filePath = getTokenPath(email);
-  const writeResult = await writeJsonFile(filePath, token);
+  try {
+    const redis = getRedisClient();
+    const key = getTokenKey(email);
 
-  if (!writeResult.success) {
-    return { success: false, error: writeResult.error };
+    await redis.hset(key, {
+      projects: JSON.stringify(projects),
+      updated_at: String(token.updated_at),
+    });
+
+    // Update cache
+    const existingCache = getCachedTokens();
+    if (existingCache) {
+      existingCache.set(email, token);
+    }
+
+    consoleDebug(
+      PREFIX.DEBUG,
+      `Updated projects for ${email}: ${projects.length} projects`,
+    );
+    return { success: true, data: token };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to update projects for ${email}: ${errorMsg}`,
+    );
+    return { success: false, error: errorMsg };
   }
-
-  // Update cache
-  const existingCache = getCachedTokens();
-  if (existingCache) {
-    existingCache.set(email, token);
-  }
-
-  consoleDebug(
-    PREFIX.DEBUG,
-    `Updated projects for ${email}: ${projects.length} projects`,
-  );
-  return { success: true, data: token };
 }
 
 /**
@@ -503,19 +594,29 @@ export async function updateTokenClient(
   token.client = client;
   token.updated_at = Math.floor(Date.now() / 1000);
 
-  const filePath = getTokenPath(email);
-  const writeResult = await writeJsonFile(filePath, token);
+  try {
+    const redis = getRedisClient();
+    const key = getTokenKey(email);
 
-  if (!writeResult.success) {
-    return { success: false, error: writeResult.error };
+    await redis.hset(key, {
+      client,
+      updated_at: String(token.updated_at),
+    });
+
+    // Update cache
+    const existingCache = getCachedTokens();
+    if (existingCache) {
+      existingCache.set(email, token);
+    }
+
+    consoleDebug(PREFIX.DEBUG, `Updated client for ${email}: ${client}`);
+    return { success: true, data: token };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    consoleError(
+      PREFIX.ERROR,
+      `Failed to update client for ${email}: ${errorMsg}`,
+    );
+    return { success: false, error: errorMsg };
   }
-
-  // Update cache
-  const existingCache = getCachedTokens();
-  if (existingCache) {
-    existingCache.set(email, token);
-  }
-
-  consoleDebug(PREFIX.DEBUG, `Updated client for ${email}: ${client}`);
-  return { success: true, data: token };
 }

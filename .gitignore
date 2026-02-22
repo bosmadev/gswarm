@@ -19,6 +19,8 @@ data/
 # Files
 !.gitkeep
 .mcp.json
+.env
+.env.local
 .env.keys
 tsconfig.tsbuildinfo
 next-env.d.ts
