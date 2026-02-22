@@ -3,6 +3,44 @@
 
 ---
 
+## [![v1.0.7](https://img.shields.io/badge/v1.0.7-2026--02--22-333333.svg)](https://github.com/bosmadev/gswarm/pull/2) | Build 8
+
+Security fixes, storage features, accessibility fixes, performance
+fixes, CI/CD fixes, code quality updates, 1 maintenance task, and 1
+documentation update.
+
+- [x] [`4258f57`](https://github.com/bosmadev/gswarm/commit/4258f57)
+- [x] [`33d1cb2`](https://github.com/bosmadev/gswarm/commit/33d1cb2)
+- [x] [`4a82ffe`](https://github.com/bosmadev/gswarm/commit/4a82ffe)
+- [x] [`f94aec8`](https://github.com/bosmadev/gswarm/commit/f94aec8)
+- [x] [`44b75e2`](https://github.com/bosmadev/gswarm/commit/44b75e2)
+- [x] [`484a151`](https://github.com/bosmadev/gswarm/commit/484a151)
+- [x] [`d564ccf`](https://github.com/bosmadev/gswarm/commit/d564ccf)
+- [x] [`f859fb5`](https://github.com/bosmadev/gswarm/commit/f859fb5)
+- [x] [`93b7255`](https://github.com/bosmadev/gswarm/commit/93b7255)
+- [x] [`1c0f148`](https://github.com/bosmadev/gswarm/commit/1c0f148)
+- [x] [`2ef568c`](https://github.com/bosmadev/gswarm/commit/2ef568c)
+- [x] [`09de09b`](https://github.com/bosmadev/gswarm/commit/09de09b)
+- [x] [`7681495`](https://github.com/bosmadev/gswarm/commit/7681495)
+- [x] [`099075c`](https://github.com/bosmadev/gswarm/commit/099075c)
+- [x] [`34b7765`](https://github.com/bosmadev/gswarm/commit/34b7765)
+- [x] [`5017f94`](https://github.com/bosmadev/gswarm/commit/5017f94)
+- [x] [`f31bc77`](https://github.com/bosmadev/gswarm/commit/f31bc77)
+- [x] [`0f7b507`](https://github.com/bosmadev/gswarm/commit/0f7b507)
+- [x] [`56a09e7`](https://github.com/bosmadev/gswarm/commit/56a09e7)
+- [x] [`21fbf0a`](https://github.com/bosmadev/gswarm/commit/21fbf0a)
+- [x] [`727ec84`](https://github.com/bosmadev/gswarm/commit/727ec84)
+- [x] [`2d6056d`](https://github.com/bosmadev/gswarm/commit/2d6056d)
+- [x] [`e4291a1`](https://github.com/bosmadev/gswarm/commit/e4291a1)
+- [x] [`60b0972`](https://github.com/bosmadev/gswarm/commit/60b0972) ci:
+- [x] [`c018a7a`](https://github.com/bosmadev/gswarm/commit/c018a7a)
+- [x] [`f974873`](https://github.com/bosmadev/gswarm/commit/f974873)
+- [x] [`4c1a68b`](https://github.com/bosmadev/gswarm/commit/4c1a68b)
+- [x] [`f630552`](https://github.com/bosmadev/gswarm/commit/f630552)
+
+
+---
+
 ## [![v1.0.6](https://img.shields.io/badge/v1.0.6-2026--02--21-333333.svg)](https://github.com/bosmadev/gswarm/commit/a96547cf1aad7830c54cbb85ec73b6922e0fe8c1) | Build 12
 
 fix(ci): add OWNER gating to labeled and assigned triggers
