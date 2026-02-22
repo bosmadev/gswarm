@@ -567,6 +567,8 @@ jobs:
               git push --force origin "$LATEST:refs/heads/$BRANCH"
               echo "✓ Reset $BRANCH to $(git rev-parse --short $LATEST)"
             else
-              echo "⊘ Branch $BRANCH does not exist, skipping"
+              # Branch was deleted (e.g., GitHub "Delete branch after merge") — recreate it
+              git push origin "$LATEST:refs/heads/$BRANCH"
+              echo "✓ Created $BRANCH at $(git rev-parse --short $LATEST) (branch was missing)"
             fi
           done

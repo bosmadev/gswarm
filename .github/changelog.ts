@@ -189,8 +189,25 @@ function extractCommitContent(commit: CommitInfo): { summary: string; changes: s
   if (commitsIdx !== -1) {
     let endIdx = lines.findIndex((l, i) => i > commitsIdx && l.startsWith("## "));
     if (endIdx === -1) endIdx = lines.length;
-    changes = lines
-      .slice(commitsIdx + 1, endIdx)
+
+    // Join continuation lines: when a bullet wraps across lines (common with long
+    // commit hash links), the description ends up on the next line without a "-" prefix.
+    // Join these back to the parent bullet before filtering.
+    const rawLines = lines.slice(commitsIdx + 1, endIdx);
+    const joinedLines: string[] = [];
+    for (const line of rawLines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("-") || trimmed.startsWith("###") || trimmed === "") {
+        joinedLines.push(line);
+      } else if (joinedLines.length > 0 && joinedLines[joinedLines.length - 1].trim().startsWith("-")) {
+        // Continuation of previous bullet — append with space
+        joinedLines[joinedLines.length - 1] += " " + trimmed;
+      } else {
+        joinedLines.push(line);
+      }
+    }
+
+    changes = joinedLines
       .filter((l) => l.trim().startsWith("-") && !l.trim().startsWith("###"))
       .map((l) =>
         l.replace(/^-\s*b\d+-\d+:\s*/, "- ").replace(
@@ -198,6 +215,23 @@ function extractCommitContent(commit: CommitInfo): { summary: string; changes: s
           (_, type: string) => `- ${verbs[type.toLowerCase()] || "Updated"} `,
         ),
       );
+  }
+
+  // Also extract ## Details section (contains human-readable change descriptions)
+  const detailsIdx = lines.findIndex((l) => l.startsWith("## Details"));
+  if (detailsIdx !== -1) {
+    let endIdx = lines.findIndex((l, i) => i > detailsIdx && l.startsWith("## "));
+    if (endIdx === -1) endIdx = lines.length;
+    const detailLines = lines
+      .slice(detailsIdx + 1, endIdx)
+      .filter((l) => l.trim().startsWith("-"));
+    // Append Details to changes (dedup: skip if already present from Changes section)
+    const existingSet = new Set(changes.map((c) => c.trim().toLowerCase()));
+    for (const dl of detailLines) {
+      if (!existingSet.has(dl.trim().toLowerCase()) && !isTrivia(dl)) {
+        changes.push(dl);
+      }
+    }
   }
 
   // Fallback: use commit subject + body bullets
@@ -306,9 +340,19 @@ const processedBuildIds: string[] = [];
 // Process commits oldest-first (already reversed in discovery)
 for (const commit of commits) {
   // Determine Build ID: use commit's own or auto-assign
+  // IMPORTANT: If commit has an explicit Build ID that's stale (≤ highest existing),
+  // auto-increment to avoid out-of-order numbering (e.g., PR titled "Build 8" merged
+  // after Builds 9-12 were pushed directly to main).
   let buildId: string;
   if (commit.buildId) {
-    buildId = commit.buildId;
+    const explicitId = parseInt(commit.buildId, 10);
+    if (explicitId <= highestBuild) {
+      highestBuild++;
+      buildId = String(highestBuild);
+      console.log(`⚠ Stale Build ID ${commit.buildId} in commit (highest is ${highestBuild - 1}), reassigned to Build ${buildId}: ${commit.subject.slice(0, 60)}`);
+    } else {
+      buildId = commit.buildId;
+    }
   } else {
     highestBuild++;
     buildId = String(highestBuild);
