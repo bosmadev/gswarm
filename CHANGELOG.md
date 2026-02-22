@@ -3,6 +3,18 @@
 
 ---
 
+## [![v1.0.8](https://img.shields.io/badge/v1.0.8-2026--02--22-333333.svg)](https://github.com/bosmadev/gswarm/commit/6159d3f9c4c4e3e788039de38080ee93caa90c22) | Build 14
+
+fix(ci): rebuild CHANGELOG  + fix stale Build ID collision
+
+- [x] Renumber PR #2 from Build 8 → Build 13 (was stale, merged after Build 12)
+- [x] Fill in actual change descriptions (were empty due to multi-line wrap bug)
+- [x] changelog.ts: auto-increment stale Build IDs, join wrapped bullets, extract Details section
+- [x] claude.yml: recreate dev branch if deleted after PR merge instead of skipping
+
+
+---
+
 ## [![v1.0.7](https://img.shields.io/badge/v1.0.7-2026--02--22-333333.svg)](https://github.com/bosmadev/gswarm/pull/2) | Build 13
 
 Security fixes, storage features, accessibility fixes, performance fixes, CI/CD fixes, code quality updates, and documentation.
