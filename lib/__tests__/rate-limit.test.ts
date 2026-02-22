@@ -3,7 +3,7 @@
  * @description Tests for RateLimiter sliding window implementation
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RateLimiter } from "@/lib/rate-limit";
 
 describe("RateLimiter", () => {
@@ -62,21 +62,26 @@ describe("RateLimiter", () => {
   });
 
   describe("TTL expiry / reset", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("allows requests after window expires", () => {
-      // Use a very short window
       const shortLimiter = new RateLimiter({ maxAttempts: 2, windowMs: 50 });
 
       shortLimiter.check("ip-ttl");
       shortLimiter.check("ip-ttl");
       expect(shortLimiter.check("ip-ttl").allowed).toBe(false);
 
-      return new Promise<void>((resolve) => {
-        setTimeout(() => {
-          const r = shortLimiter.check("ip-ttl");
-          expect(r.allowed).toBe(true);
-          resolve();
-        }, 100);
-      });
+      // Advance past the 50ms window
+      vi.advanceTimersByTime(100);
+
+      const r = shortLimiter.check("ip-ttl");
+      expect(r.allowed).toBe(true);
     });
   });
 
