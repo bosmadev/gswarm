@@ -3,6 +3,15 @@
 
 ---
 
+## [![v1.0.10](https://img.shields.io/badge/v1.0.10-2026--02--22-333333.svg)](https://github.com/bosmadev/gswarm/commit/48ea16f7d244297d821534f39e103a3abd2c7990) | Build 16
+
+config: sync .github templates from source-of-truth
+
+- [x] Update CODEOWNERS, bug_report.md, feature_request.md from ~/.claude
+
+
+---
+
 ## [![v1.0.9](https://img.shields.io/badge/v1.0.9-2026--02--22-333333.svg)](https://github.com/bosmadev/gswarm/commit/b63eaa40ddef6ae26ea9e4b9035567e291b2eb84) | Build 15
 
 fix(changelog): rebuild  with full PR body content
