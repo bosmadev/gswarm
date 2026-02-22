@@ -3,6 +3,17 @@
 
 ---
 
+## [![v1.0.9](https://img.shields.io/badge/v1.0.9-2026--02--22-333333.svg)](https://github.com/bosmadev/gswarm/commit/b63eaa40ddef6ae26ea9e4b9035567e291b2eb84) | Build 15
+
+fix(changelog): rebuild  with full PR body content
+
+- [x] Changes section (Added/Fixed/Changed/Updated) with commit hash links + descriptions
+- [x] Details section with 92 individual change items
+- [x] Merge commits and changelog bot commits filtered out
+
+
+---
+
 ## [![v1.0.8](https://img.shields.io/badge/v1.0.8-2026--02--22-333333.svg)](https://github.com/bosmadev/gswarm/commit/6159d3f9c4c4e3e788039de38080ee93caa90c22) | Build 14
 
 fix(ci): rebuild CHANGELOG  + fix stale Build ID collision
