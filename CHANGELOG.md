@@ -3,6 +3,17 @@
 
 ---
 
+## [![v1.0.11](https://img.shields.io/badge/v1.0.11-2026--02--23-333333.svg)](https://github.com/bosmadev/gswarm/commit/b6a1041affefc51209d3b22a9a5146f93d0f5361) | Build 17
+
+config: unify gitignore and reactgrab-patch with canonical format
+
+- [x] Remove .env from gitignore (encrypted .env is committed)
+- [x] Add data/ and runtime patterns
+- [x] Update reactgrab-patch.cjs (7-function coverage, arrow style)
+
+
+---
+
 ## [![v1.0.10](https://img.shields.io/badge/v1.0.10-2026--02--22-333333.svg)](https://github.com/bosmadev/gswarm/commit/48ea16f7d244297d821534f39e103a3abd2c7990) | Build 16
 
 config: sync .github templates from source-of-truth
