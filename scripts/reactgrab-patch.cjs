@@ -8,6 +8,8 @@ if (process.platform === "win32") {
     const last = args[args.length - 1];
     if (last && typeof last === "object" && !Array.isArray(last)) {
       last.windowsHide = true;
+    } else {
+      args.push({ windowsHide: true });
     }
   };
 
@@ -15,8 +17,14 @@ if (process.platform === "win32") {
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] && typeof rest[i] === "object" && !Array.isArray(rest[i])) {
         rest[i].windowsHide = true;
-        break;
+        return;
       }
+    }
+    const lastIdx = rest.length - 1;
+    if (lastIdx >= 0 && typeof rest[lastIdx] === "function") {
+      rest.splice(lastIdx, 0, { windowsHide: true });
+    } else {
+      rest.push({ windowsHide: true });
     }
   };
 
@@ -42,5 +50,23 @@ if (process.platform === "win32") {
   cp.fork = function patchedFork(modulePath, ...rest) {
     injectWindowsHide(rest);
     return originalFork.call(this, modulePath, ...rest);
+  };
+
+  const originalSpawnSync = cp.spawnSync;
+  cp.spawnSync = function patchedSpawnSync(command, ...rest) {
+    injectWindowsHide(rest);
+    return originalSpawnSync.call(this, command, ...rest);
+  };
+
+  const originalExecFileSync = cp.execFileSync;
+  cp.execFileSync = function patchedExecFileSync(file, ...rest) {
+    injectIntoOptions(rest);
+    return originalExecFileSync.call(this, file, ...rest);
+  };
+
+  const originalExecSync = cp.execSync;
+  cp.execSync = function patchedExecSync(command, ...rest) {
+    injectIntoOptions(rest);
+    return originalExecSync.call(this, command, ...rest);
   };
 }

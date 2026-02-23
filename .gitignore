@@ -2,29 +2,32 @@
 .vscode/
 node_modules/
 .next/
+out/
 .cache/
 temp/
+tmp/
 .claude/*
 !.claude/
 .serena/
+test-results/
+coverage/
+
+# Python
 __pycache__/
+*.py[codz]
 .venv/
 .pytest_cache/
-tmp/
-test-results/
 
 # Runtime data (tokens, sessions, metrics)
 data/
 
 # Files
 !.gitkeep
-.mcp.json
-.env
-.env.local
 .env.keys
-tsconfig.tsbuildinfo
+.env.local
+.mcp.json
+*.tsbuildinfo
 next-env.d.ts
 *.log
 .server.pid
 nul
-
