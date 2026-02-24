@@ -3,6 +3,14 @@
 
 ---
 
+## [![v1.1.0](https://img.shields.io/badge/v1.1.0-2026--02--24-333333.svg)](https://github.com/bosmadev/gswarm/commit/a7abd140e5cffbc31d27c3504bc1c229b75944b1) | Build 18
+
+config: sync changelog.ts from source-of-truth (categorized format + biome)
+
+
+
+---
+
 ## [![v1.0.11](https://img.shields.io/badge/v1.0.11-2026--02--23-333333.svg)](https://github.com/bosmadev/gswarm/commit/b6a1041affefc51209d3b22a9a5146f93d0f5361) | Build 17
 
 config: unify gitignore and reactgrab-patch with canonical format
